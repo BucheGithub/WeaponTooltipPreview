@@ -1,0 +1,8 @@
+# Copy to gradle.properties (ignored by git) and adjust for your machine.
+
+# Starsector install folder. macOS: the .app bundle; Windows/Linux: the folder holding starsector-core.
+# The build reads the game API from <starsectorDir>/Contents/Resources/Java and LazyLib/LunaLib from <starsectorDir>/mods.
+starsectorDir=/Applications/Starsector.app
+
+# Optional: the JDK Gradle runs and compiles with (17 recommended). Bytecode targets Java 8 either way.
+#org.gradle.java.home=/path/to/jdk-17

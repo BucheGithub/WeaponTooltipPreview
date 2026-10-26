@@ -1,0 +1,24 @@
+# Build output. The installable mod in WeaponTooltipPreview/ is built from source/ and committed on purpose.
+source/build/
+source/.gradle/
+.gradle/
+build/
+
+# Machine-specific build settings (template: source/gradle.properties.example)
+source/gradle.properties
+
+# Agent plans, specs and notes
+PLAN.md
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/
+plans/
+specs/
+
+# OS and IDE files
+.DS_Store
+.idea/
+*.iml
+.vscode/
+out/

@@ -1,0 +1,5 @@
+fieldID,fieldName,fieldType,defaultValue,secondaryValue,fieldDescription,minValue,maxValue,tab
+wtp_header,Weapon Tooltip Preview,Header,Weapon Tooltip Preview,,,,,
+wtp_soundLevel,Sound level,Int,30,,"Volume of the preview's sounds, as a percentage (0 to 100) of your sound effects volume. 0 turns preview sound off.",0,100,
+wtp_dummyShip,Dummy ship,Radio,Hammerhead,"Lasher, Wolf, Hammerhead, Enforcer, Medusa, Dominator, Eagle, Aurora, Onslaught, Paragon","The ship weapons are fired at: its stock loadout with every weapon and fighter removed. Applies from the next hover.",,,
+wtp_shieldMode,Dummy shield,Radio,Fluctuating,"Always on, Always off, Fluctuating","How the dummy uses its shield. Fluctuating raises it for 6 seconds, then lowers it for 6 seconds. Applies from the next hover.",,,
