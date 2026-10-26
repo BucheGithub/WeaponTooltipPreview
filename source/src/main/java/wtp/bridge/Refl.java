@@ -184,7 +184,10 @@ public final class Refl {
         return null;
     }
 
-    /** First method with this name whose parameter types exactly match {@code params}. */
+    /**
+     * First method with this name whose parameter types exactly match {@code params}. A null entry matches any type,
+     * which finds an obfuscated class through an unobfuscated method that takes it.
+     */
     public static RMethod method(Class<?> cls, String name, Class<?>... params) {
         for (RMethod m : methods(cls)) {
             if (m.name.equals(name) && sameParams(m.params, params)) return m;
@@ -260,7 +263,7 @@ public final class Refl {
     private static boolean sameParams(Class<?>[] a, Class<?>[] b) {
         if (a.length != b.length) return false;
         for (int i = 0; i < a.length; i++) {
-            if (a[i] != b[i]) return false;
+            if (b[i] != null && a[i] != b[i]) return false;
         }
         return true;
     }

@@ -10,8 +10,17 @@ import java.util.List;
  * Every lookup into the game's obfuscated core, resolved once at application load. Required entries missing (a game
  * update renamed them) disable the mod and leave vanilla tooltips untouched; optional entries degrade one feature.
  * Classes are found by their (stable) names, static fields by type, methods by name and exact signature.
+ * <p>
+ * Each platform's build is obfuscated separately, so the Windows and macOS jars give the same class different names.
+ * Obfuscated classes are therefore reached through the unobfuscated methods and fields that use them; where nothing
+ * does, and for obfuscated method names that differ, every known build's name is tried, macOS first, then Windows.
  */
 public final class ObfBridge {
+
+    /** In a parameter list: any type (the obfuscated class being looked for). */
+    private static final Class<?> ANY = null;
+    /** The sound manager has no unobfuscated anchor; its member names are the same in every build. */
+    private static final String[] SOUND_MANAGER_CLASSES = {"sound.ooOO", "sound.C"};
 
     public static final String TOOLTIP_BASE_CLASS = "com.fs.starfarer.ui.impl.StandardTooltipV2";
 
@@ -65,7 +74,8 @@ public final class ObfBridge {
     /** CampaignState.showingCodex; null → the Codex cannot be detected (its tooltips are never scanned anyway). */
     public static Refl.RField campaignShowingCodex;
     /**
-     * The game's sound effects volume (sound.ooOO: getInstance, two volume channels with getter/setter). Only the
+     * The game's sound effects volume (sound.ooOO on macOS, sound.C on Windows: getInstance, two volume channels with
+     * getter/setter). Only the
      * options and title screens set it. Null → the preview cannot be made quieter, so it is muted below 100%.
      */
     public static Refl.RMethod soundInstance;
@@ -98,9 +108,6 @@ public final class ObfBridge {
         List<String> degraded = new ArrayList<>();
 
         engineClass = (Class<?>) need(missing, "CombatEngine", () -> Refl.classForName("com.fs.starfarer.combat.CombatEngine"));
-        mapClass = (Class<?>) need(missing, "combat map", () -> Refl.classForName("com.fs.starfarer.combat.A.oOOO"));
-        inputClass = (Class<?>) need(missing, "input list", () -> Refl.classForName("com.fs.starfarer.util.super.B"));
-        combatUiInterface = (Class<?>) need(missing, "combat UI interface", () -> Refl.classForName("com.fs.starfarer.combat.K"));
         animClass = (Class<?>) need(missing, "AnimationManager", () -> Refl.classForName("com.fs.graphics.anim.AnimationManager"));
         appDriverClass = (Class<?>) need(missing, "AppDriver", () -> Refl.classForName("com.fs.state.AppDriver"));
         tooltipClass = (Class<?>) need(missing, "tooltip base", () -> Refl.classForName(TOOLTIP_BASE_CLASS));
@@ -118,9 +125,13 @@ public final class ObfBridge {
             engineSetPaused = method(missing, e, "setPaused", boolean.class);
             enginePreCombat = method(missing, e, "preCombat");
             engineRender = method(missing, e, "render", boolean.class);
-            if (combatUiInterface != null) engineSetCombatUI = method(missing, e, "setCombatUI", combatUiInterface);
-            if (mapClass != null) engineSetCombatMap = method(missing, e, "setCombatMap", mapClass);
-            if (inputClass != null) engineAdvance = method(missing, e, "advance", float.class, inputClass);
+            // The combat UI interface, combat map and input list are the obfuscated parameters of these methods.
+            engineSetCombatUI = method(missing, e, "setCombatUI", ANY);
+            engineSetCombatMap = method(missing, e, "setCombatMap", ANY);
+            engineAdvance = method(missing, e, "advance", float.class, ANY);
+            if (engineSetCombatUI != null) combatUiInterface = engineSetCombatUI.params[0];
+            if (engineSetCombatMap != null) mapClass = engineSetCombatMap.params[0];
+            if (engineAdvance != null) inputClass = engineAdvance.params[1];
         }
         if (mapClass != null) {
             mapSetBounds = method(missing, mapClass, "super", float.class, float.class, float.class, float.class);
@@ -152,12 +163,18 @@ public final class ObfBridge {
             tooltipWidget = method(degraded, tooltipClass, "getWidgetAttachedTo");
         }
 
-        arcRendererClass = (Class<?>) need(degraded, "arc renderer", () -> Refl.classForName("com.fs.starfarer.renderers.oOOO"));
+        // CombatState's own fields hold the arc renderer and the target reticle.
+        Class<?> combatState = (Class<?>) need(degraded, "CombatState", () -> Refl.classForName("com.fs.starfarer.combat.CombatState"));
+        if (combatState != null) {
+            arcRendererClass = fieldType(degraded, "arc renderer", combatState, "arcRenderer");
+            reticleClass = fieldType(degraded, "target reticle", combatState, "targetReticleRenderer");
+        }
+
         Class<?> group = (Class<?>) need(degraded, "WeaponGroup", () -> Refl.classForName("com.fs.starfarer.combat.systems.WeaponGroup"));
         if (arcRendererClass != null && group != null) {
             arcSelectGroup = method(degraded, arcRendererClass, "Ò00000", group);
-            arcAdvance = method(degraded, arcRendererClass, "super", float.class);
-            arcRender = method(degraded, arcRendererClass, "String");
+            arcAdvance = method(degraded, arcRendererClass, new String[]{"super", "o00000"}, float.class);
+            arcRender = method(degraded, arcRendererClass, new String[]{"String", "Ô00000"});
         }
         if (arcSelectGroup == null || arcAdvance == null || arcRender == null) arcRendererClass = null;
 
@@ -168,7 +185,7 @@ public final class ObfBridge {
         }
         if (refitMember == null || refitShipDisplay == null || tooltipWidget == null) refitPanelClass = null;
 
-        Class<?> sound = (Class<?>) need(degraded, "sound manager", () -> Refl.classForName("sound.ooOO"));
+        Class<?> sound = (Class<?>) need(degraded, "sound manager", () -> firstClass(SOUND_MANAGER_CLASSES));
         if (sound != null) {
             soundInstance = typed(degraded, sound, sound, "ö00000");
             soundVolumeGet = typed(degraded, sound, float.class, "for");
@@ -181,7 +198,6 @@ public final class ObfBridge {
             soundInstance = null;
         }
 
-        reticleClass = (Class<?>) need(degraded, "target reticle", () -> Refl.classForName("com.fs.starfarer.renderers.A.new"));
         Class<?> ship = (Class<?>) need(degraded, "Ship", () -> Refl.classForName("com.fs.starfarer.combat.entities.Ship"));
         if (reticleClass != null && ship != null) {
             reticleTrack = typed(degraded, reticleClass, void.class, "super", ship, float.class);
@@ -211,6 +227,38 @@ public final class ObfBridge {
     private static Refl.RMethod method(List<String> missing, Class<?> cls, String name, Class<?>... params) {
         String simple = cls.getName().substring(cls.getName().lastIndexOf('.') + 1);
         return (Refl.RMethod) need(missing, simple + "." + name, () -> Refl.method(cls, name, params));
+    }
+
+    /** The first of {@code names} (one per build) that names a method with these parameters. */
+    private static Refl.RMethod method(List<String> missing, Class<?> cls, String[] names, Class<?>... params) {
+        String simple = cls.getName().substring(cls.getName().lastIndexOf('.') + 1);
+        return (Refl.RMethod) need(missing, simple + "." + String.join("|", names), () -> {
+            for (String name : names) {
+                Refl.RMethod m = Refl.method(cls, name, params);
+                if (m != null) return m;
+            }
+            return null;
+        });
+    }
+
+    /** The declared type of an unobfuscated field holding an obfuscated class. */
+    private static Class<?> fieldType(List<String> missing, String what, Class<?> cls, String field) {
+        return (Class<?>) need(missing, what, () -> {
+            Refl.RField f = Refl.fieldNamed(cls, field);
+            return f != null ? f.type : null;
+        });
+    }
+
+    /** The first of these classes (one name per build) that exists; null if none does. */
+    private static Class<?> firstClass(String... names) {
+        for (String name : names) {
+            try {
+                return Refl.classForName(name);
+            } catch (RuntimeException notThisBuild) {
+                // try the next build's name
+            }
+        }
+        return null;
     }
 
     /** Name, parameters and return type: obfuscated names are reused across overloads. */

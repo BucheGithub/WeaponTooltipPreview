@@ -5,7 +5,9 @@ plugins {
 val modFolderName = "WeaponTooltipPreview"
 val starsectorDir = file(providers.gradleProperty("starsectorDir").orNull
     ?: error("Set starsectorDir in source/gradle.properties (copy gradle.properties.example)."))
-val gameJars = starsectorDir.resolve("Contents/Resources/Java")
+// macOS keeps the game jars inside the app bundle; Windows and Linux in starsector-core.
+val gameJars = listOf("Contents/Resources/Java", "starsector-core").map(starsectorDir::resolve).firstOrNull { it.isDirectory }
+    ?: error("No game jars in $starsectorDir: expected Contents/Resources/Java (macOS) or starsector-core (Windows/Linux).")
 val modsDir = starsectorDir.resolve("mods")
 /** The ready-to-install mod, next to this source folder; committed so the repository doubles as a download. */
 val modOutputDir = rootDir.resolve("../$modFolderName")
