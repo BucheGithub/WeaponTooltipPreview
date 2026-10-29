@@ -7,6 +7,7 @@ import com.fs.starfarer.api.ui.UIComponentAPI;
 import org.lwjgl.opengl.GL11;
 import wtp.Log;
 import wtp.scenario.NoPreviewException;
+import wtp.scenario.PreviewSubject;
 import wtp.scenario.RefitShip;
 
 import java.util.HashSet;
@@ -14,19 +15,20 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The panel injected into the weapon tooltip: steps the preview session in advance() and draws it in render(). A
- * failure ends the session, shows "Preview unavailable" and leaves that weapon's tooltips vanilla from then on.
+ * The panel injected into a weapon or fighter LPC tooltip: steps the preview session in advance() and draws it in
+ * render(). A failure ends the session, shows "Preview unavailable" and leaves that weapon's or wing's tooltips vanilla
+ * from then on.
  */
 final class PreviewPanel implements CustomUIPanelPlugin {
 
     private static final long STALE_NANOS = 500_000_000L;
     private static final float MAX_STEP = 1f / 30f;
     private static final float BRACKET = 10f;
-    /** Weapons whose preview failed this game session. */
-    private static final Set<String> FAILED = new HashSet<>();
+    /** Weapons and wings whose preview failed this game session. */
+    private static final Set<PreviewSubject> FAILED = new HashSet<>();
 
     private final int tooltipId;
-    private final String weaponId;
+    private final PreviewSubject subject;
     private final RefitShip refit;
     private PositionAPI pos;
     private PreviewSession session;
@@ -35,14 +37,14 @@ final class PreviewPanel implements CustomUIPanelPlugin {
     private boolean disposed;
     private long lastAdvanceNanos;
 
-    PreviewPanel(int tooltipId, String weaponId, RefitShip refit) {
+    PreviewPanel(int tooltipId, PreviewSubject subject, RefitShip refit) {
         this.tooltipId = tooltipId;
-        this.weaponId = weaponId;
+        this.subject = subject;
         this.refit = refit;
     }
 
-    static boolean hasFailed(String weaponId) {
-        return FAILED.contains(weaponId);
+    static boolean hasFailed(PreviewSubject subject) {
+        return FAILED.contains(subject);
     }
 
     static void clearFailures() {
@@ -65,7 +67,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         if (disposed || failed || pos == null) return;
         lastAdvanceNanos = System.nanoTime();
         try {
-            if (session == null) session = PreviewSession.start(weaponId, refit);
+            if (session == null) session = PreviewSession.start(subject, refit);
             session.tick(Math.min(amount, MAX_STEP));
         } catch (NoPreviewException e) {
             fail(e.getMessage(), null);
@@ -136,9 +138,9 @@ final class PreviewPanel implements CustomUIPanelPlugin {
     /** {@code t == null}: an expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */
     private void fail(String what, Throwable t) {
         failed = true;
-        FAILED.add(weaponId);
-        if (t != null) Log.error("tooltip #" + tooltipId + " (" + weaponId + "): " + what, t);
-        else Log.info("no preview for %s: %s", weaponId, what);
+        FAILED.add(subject);
+        if (t != null) Log.error("tooltip #" + tooltipId + " (" + subject + "): " + what, t);
+        else Log.info("no preview for %s: %s", subject, what);
         endSession(t != null);
         if (statusLine != null) statusLine.setOpacity(1f);
     }
@@ -148,7 +150,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         try {
             session.dispose(failure);
         } catch (Throwable t) {
-            Log.error("ending the preview of " + weaponId + " failed", t);
+            Log.error("ending the preview of " + subject + " failed", t);
         } finally {
             session = null;
         }

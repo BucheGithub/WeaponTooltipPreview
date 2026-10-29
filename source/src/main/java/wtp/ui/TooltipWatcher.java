@@ -2,6 +2,7 @@ package wtp.ui;
 
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CoreUITabId;
+import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
 import com.fs.starfarer.api.ui.Alignment;
 import com.fs.starfarer.api.ui.CustomPanelAPI;
@@ -14,6 +15,7 @@ import com.fs.starfarer.api.util.Misc;
 import wtp.Log;
 import wtp.bridge.ObfBridge;
 import wtp.bridge.Refl;
+import wtp.scenario.PreviewSubject;
 import wtp.scenario.RefitShip;
 import wtp.sim.SandboxHost;
 
@@ -24,8 +26,8 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 /**
- * Finds live weapon tooltips (direct children of the campaign screen panel while shown) and injects the preview
- * panel between the description and the "You own a total of…" line, growing the tooltip downward.
+ * Finds live weapon and fighter LPC tooltips (direct children of the campaign screen panel while shown) and injects the
+ * preview panel between the description and the "You own a total of…" line, growing the tooltip downward.
  */
 final class TooltipWatcher {
 
@@ -38,15 +40,16 @@ final class TooltipWatcher {
 
     private static final class TipState {
         final int id;
-        final String weaponId;
+        /** The weapon or wing the tooltip is about; null for other tooltips. */
+        final PreviewSubject subject;
         boolean visible;
         CustomPanelAPI injected;
         float desiredBottom = Float.NaN;
         PreviewPanel preview;
 
-        TipState(int id, String weaponId) {
+        TipState(int id, PreviewSubject subject) {
             this.id = id;
-            this.weaponId = weaponId;
+            this.subject = subject;
         }
     }
 
@@ -108,7 +111,7 @@ final class TooltipWatcher {
     private void handle(Object tip) {
         TipState s = states.get(tip);
         if (s == null) {
-            s = new TipState(nextId++, weaponIdOf(tip));
+            s = new TipState(nextId++, subjectOf(tip));
             states.put(tip, s);
         }
 
@@ -117,22 +120,26 @@ final class TooltipWatcher {
             s.visible = visibleNow;
             if (!visibleNow) disposePreview(s);
         }
-        if (s.weaponId == null || !visibleNow) return;
+        if (s.subject == null || !visibleNow) return;
 
         if (s.injected == null || !UiTree.isDescendant(tip, s.injected, 6)) {
             if (s.injected != null) Log.debug("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
-            if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.weaponId)) return;
+            if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) return;
             inject(tip, s);
         } else {
             enforcePlacement(tip, s);
         }
     }
 
-    private static String weaponIdOf(Object tip) {
+    /** Weapon tooltips hold the weapon's spec, fighter LPC tooltips the wing's. */
+    private static PreviewSubject subjectOf(Object tip) {
         Refl.RField f = Refl.fieldOfType(tip.getClass(), WeaponSpecAPI.class, false);
-        if (f == null) return null;
-        Object spec = f.get(tip);
-        return spec instanceof WeaponSpecAPI ? ((WeaponSpecAPI) spec).getWeaponId() : null;
+        Object spec = f != null ? f.get(tip) : null;
+        if (spec instanceof WeaponSpecAPI) return PreviewSubject.weapon(((WeaponSpecAPI) spec).getWeaponId());
+        f = Refl.fieldOfType(tip.getClass(), FighterWingSpecAPI.class, false);
+        spec = f != null ? f.get(tip) : null;
+        if (spec instanceof FighterWingSpecAPI) return PreviewSubject.wing(((FighterWingSpecAPI) spec).getId());
+        return null;
     }
 
     // ------------------------------------------------------------------ injection
@@ -150,6 +157,7 @@ final class TooltipWatcher {
     }
 
     private void inject(Object tip, TipState s) {
+        stopRecreatingEveryFrame(tip, s);
         Anchor a = findLabel(tip, null, OWN_LINE_PREFIX, 8);
         if (a == null) a = belowLongestLabel(tip);
         if (a == null) {
@@ -179,7 +187,7 @@ final class TooltipWatcher {
         disposeAll();
         RefitShip refit = Global.getSector().getCampaignUI().getCurrentCoreTab() == CoreUITabId.REFIT
                 ? RefitLookup.find(tip) : null;
-        PreviewPanel preview = new PreviewPanel(s.id, s.weaponId, refit);
+        PreviewPanel preview = new PreviewPanel(s.id, s.subject, refit);
         s.preview = preview;
         livePreviews.add(preview);
         CustomPanelAPI panel = Global.getSettings().createCustom(width, PREVIEW_HEIGHT, preview);
@@ -202,7 +210,24 @@ final class TooltipWatcher {
         }
 
         if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop);
-        Log.debug("tooltip #%d: preview for %s injected via %s", s.id, s.weaponId, a.how);
+        Log.debug("tooltip #%d: preview for %s injected via %s", s.id, s.subject, a.how);
+    }
+
+    /**
+     * Fighter LPC tooltips are built to recreate their content every frame (StandardTooltipV2Expandable's
+     * recreateEveryFrame, set through its constructor), which clears the preview panel before it is ever drawn. The
+     * preview turns that off for the tooltip it goes into; while shown, the tooltip's "cycle weapon info" key no longer
+     * refreshes it.
+     */
+    private static void stopRecreatingEveryFrame(Object tip, TipState s) {
+        try {
+            if (Boolean.TRUE.equals(Refl.call(tip, "isRecreateEveryFrame"))) {
+                Refl.call(tip, "setRecreateEveryFrame", false);
+                Log.debug("tooltip #%d recreates its content every frame; turned off for the preview", s.id);
+            }
+        } catch (RuntimeException notExpandable) {
+            // Not an expandable tooltip: nothing recreates it.
+        }
     }
 
     /**

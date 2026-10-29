@@ -1,6 +1,5 @@
 package wtp.bridge;
 
-import org.lwjgl.util.vector.Vector2f;
 import wtp.Log;
 
 import java.util.ArrayList;
@@ -83,11 +82,11 @@ public final class ObfBridge {
     public static Refl.RMethod soundVolumeSet;
     public static Refl.RMethod soundVolume2Get;
     public static Refl.RMethod soundVolume2Set;
-    /** The in-combat target reticle (brackets, hull/flux bars, armor holo); null → no target readout. */
-    public static Class<?> reticleClass;
-    public static Refl.RMethod reticleTrack;
-    public static Refl.RMethod reticleAdvance;
-    public static Refl.RMethod reticleRender;
+    /**
+     * CampaignFleetMemberView.renderWeapons(member, x, y, angle, scale, alpha, flag): a fleet member's weapon sprites
+     * over its hull, as fleet and fighter icons draw them. Null → fighter icons in the wing widget show bare hulls.
+     */
+    public static Refl.RMethod renderMemberWeapons;
 
     private static boolean ready;
 
@@ -163,12 +162,9 @@ public final class ObfBridge {
             tooltipWidget = method(degraded, tooltipClass, "getWidgetAttachedTo");
         }
 
-        // CombatState's own fields hold the arc renderer and the target reticle.
+        // CombatState's own field holds the arc renderer.
         Class<?> combatState = (Class<?>) need(degraded, "CombatState", () -> Refl.classForName("com.fs.starfarer.combat.CombatState"));
-        if (combatState != null) {
-            arcRendererClass = fieldType(degraded, "arc renderer", combatState, "arcRenderer");
-            reticleClass = fieldType(degraded, "target reticle", combatState, "targetReticleRenderer");
-        }
+        if (combatState != null) arcRendererClass = fieldType(degraded, "arc renderer", combatState, "arcRenderer");
 
         Class<?> group = (Class<?>) need(degraded, "WeaponGroup", () -> Refl.classForName("com.fs.starfarer.combat.systems.WeaponGroup"));
         if (arcRendererClass != null && group != null) {
@@ -198,13 +194,12 @@ public final class ObfBridge {
             soundInstance = null;
         }
 
-        Class<?> ship = (Class<?>) need(degraded, "Ship", () -> Refl.classForName("com.fs.starfarer.combat.entities.Ship"));
-        if (reticleClass != null && ship != null) {
-            reticleTrack = typed(degraded, reticleClass, void.class, "super", ship, float.class);
-            reticleAdvance = typed(degraded, reticleClass, void.class, "super", float.class);
-            reticleRender = typed(degraded, reticleClass, void.class, "super", float.class, float.class, Vector2f.class);
+        Class<?> memberView = (Class<?>) need(degraded, "CampaignFleetMemberView",
+                () -> Refl.classForName("com.fs.starfarer.campaign.fleet.CampaignFleetMemberView"));
+        if (memberView != null) {
+            renderMemberWeapons = method(degraded, memberView, "renderWeapons", ANY, float.class, float.class,
+                    float.class, float.class, float.class, boolean.class);
         }
-        if (reticleTrack == null || reticleAdvance == null || reticleRender == null) reticleClass = null;
 
         ready = missing.isEmpty();
         if (!degraded.isEmpty()) Log.info("bridge: optional entries missing (feature degraded): %s", degraded);

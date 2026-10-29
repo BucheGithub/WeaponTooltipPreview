@@ -10,13 +10,13 @@ import org.lwjgl.util.vector.Vector2f;
 import wtp.Log;
 import wtp.WtpSettings;
 import wtp.scenario.NoPreviewException;
+import wtp.scenario.PreviewSubject;
 import wtp.scenario.RefitShip;
 import wtp.scenario.Scenario;
 import wtp.sim.CombatArcRenderer;
 import wtp.sim.EngineSandbox;
 import wtp.sim.PreviewSound;
 import wtp.sim.SandboxHost;
-import wtp.sim.TargetReticle;
 
 /**
  * One preview: a scene in the shared sandbox engine, stepped from the panel's advance() and drawn straight into
@@ -31,7 +31,7 @@ final class PreviewSession {
     private static final float ARC_HALF_ANGLE_FOR_TURRETS = 25f;
     private static final Vector2f FAR_AWAY = new Vector2f(1e7f, 1e7f);
     /** Weapons reaching this far get the split view; shorter ones are framed at true scale in one pane. */
-    private static final float SPLIT_VIEW_MIN_RANGE = 1600f;
+    private static final float SPLIT_VIEW_MIN_RANGE = 2000f;
     private static final float GAP_UI = 22f;
     private static final float STRIP_UI = 16f;
     private static final int MAX_BLIPS = 64;
@@ -42,7 +42,7 @@ final class PreviewSession {
         float camX, camY, camW, camH;
     }
 
-    private final String weaponId;
+    private final PreviewSubject subject;
     private EngineSandbox sandbox;
     private Scenario scenario;
     private final Pane[] panes = {new Pane(), new Pane()};
@@ -56,35 +56,33 @@ final class PreviewSession {
     private CombatArcRenderer arcRenderer;
     private boolean arcUnavailable = !CombatArcRenderer.isAvailable();
     private int arcCycle;
-    /** The game's target reticle on the dummy; null without a target or after a failure. */
-    private TargetReticle reticle;
-    private static boolean reticleErrorLogged;
+    /** Hull, flux and armor of the dummy; ammo and reload of the weapon, or the carrier's wings. */
+    private final PreviewHud hud = new PreviewHud();
     private long frames;
     private long renders;
     private double simMs, renderMs;
     private boolean disposed;
 
-    private PreviewSession(String weaponId) {
-        this.weaponId = weaponId;
+    private PreviewSession(PreviewSubject subject) {
+        this.subject = subject;
     }
 
     /**
-     * Takes the shared engine and builds the weapon's scene in it. A weapon that cannot be shown leaves the engine
+     * Takes the shared engine and builds the weapon's or wing's scene in it. One that cannot be shown leaves the engine
      * intact ({@link NoPreviewException}); any other failure discards the engine, which may be in a bad state.
      */
-    static PreviewSession start(String weaponId, RefitShip refit) {
+    static PreviewSession start(PreviewSubject subject, RefitShip refit) {
         long t0 = System.nanoTime();
-        PreviewSession session = new PreviewSession(weaponId);
+        PreviewSession session = new PreviewSession(subject);
         EngineSandbox sandbox = SandboxHost.acquire(session);
         session.sandbox = sandbox;
         boolean ok = false;
         boolean expected = false;
         sandbox.swapIn();
         try {
-            session.scenario = Scenario.create(sandbox.api(), weaponId, refit, sandbox.beginScene());
+            session.scenario = Scenario.create(sandbox.api(), subject, refit, sandbox.beginScene());
             session.scenario.spawn();
             session.rearmArcRenderer();
-            session.createReticle();
             ok = true;
         } catch (NoPreviewException e) {
             expected = true;
@@ -94,10 +92,10 @@ final class PreviewSession {
             if (!ok) {
                 session.disposed = true;
                 if (expected) SandboxHost.release(session);
-                else SandboxHost.discard("scene setup failed for " + weaponId);
+                else SandboxHost.discard("scene setup failed for " + subject);
             }
         }
-        Log.debug("session for %s started in %.1f ms (scene %d of this engine)", weaponId, (System.nanoTime() - t0) / 1e6,
+        Log.debug("session for %s started in %.1f ms (scene %d of this engine)", subject, (System.nanoTime() - t0) / 1e6,
                 sandbox.scenes());
         return session;
     }
@@ -108,7 +106,7 @@ final class PreviewSession {
      */
     private void rearmArcRenderer() {
         arcCycle = scenario.setupCycle;
-        if (arcUnavailable) return;
+        if (arcUnavailable || scenario.weapon == null) return;
         try {
             CombatArcRenderer arc = new CombatArcRenderer();
             arc.select(scenario.host.getWeaponGroupFor(scenario.weapon));
@@ -117,45 +115,6 @@ final class PreviewSession {
             Log.error("combat arc renderer unavailable; drawing a plain arc", t);
             arcRenderer = null;
             arcUnavailable = true;
-        }
-    }
-
-    /** The in-combat target reticle on the dummy (ship scenes only). Swapped in only. */
-    private void createReticle() {
-        if (!TargetReticle.isAvailable() || scenario.target() == null) return;
-        try {
-            reticle = new TargetReticle();
-        } catch (Throwable t) {
-            reticleFailed("could not be created", t);
-        }
-    }
-
-    /** Selects the live dummy as the target every frame (a destroyed one is let go, as in combat). */
-    private void advanceReticle(float step) {
-        if (reticle == null) return;
-        try {
-            ShipAPI target = scenario.target();
-            if (target != null && target.isAlive()) reticle.track(target);
-            reticle.advance(step);
-        } catch (Throwable t) {
-            reticleFailed("failed to advance", t);
-        }
-    }
-
-    private void drawReticle() {
-        if (reticle == null) return;
-        try {
-            reticle.render();
-        } catch (Throwable t) {
-            reticleFailed("failed to render", t);
-        }
-    }
-
-    private void reticleFailed(String what, Throwable t) {
-        reticle = null;
-        if (!reticleErrorLogged) {
-            reticleErrorLogged = true;
-            Log.error("target reticle " + what + "; previews continue without it", t);
         }
     }
 
@@ -174,14 +133,13 @@ final class PreviewSession {
             sandbox.advance(step);
             if (scenario.setupCycle != arcCycle) rearmArcRenderer();
             if (arcRenderer != null) arcRenderer.advance(step);
-            advanceReticle(step);
             simMs += (System.nanoTime() - t0) / 1e6;
         } finally {
             sandbox.swapOut();
         }
         frames++;
         if (frames == 1 || frames % LOG_EVERY_FRAMES == 0) {
-            Log.debug("%s frame %d (%s): avg sim %.2f ms, avg render %.2f ms | %s", weaponId, frames,
+            Log.debug("%s frame %d (%s): avg sim %.2f ms, avg render %.2f ms | %s", subject, frames,
                     split ? "split" : "single", simMs / frames, renders > 0 ? renderMs / renders : 0, scenario.diagnostics());
         }
     }
@@ -212,10 +170,8 @@ final class PreviewSession {
         try {
             for (int i = 0; i < paneCount; i++) {
                 Pane p = panes[i];
-                boolean targetPane = i == paneCount - 1;
                 sandbox.render(toPixels(p.uiX), toPixels(p.uiY), toPixels(p.uiW), toPixels(p.uiH),
-                        p.camX, p.camY, p.camW, p.camH, p.uiW, p.uiH, BACKGROUND, this::drawArc,
-                        targetPane && reticle != null ? this::drawReticle : null);
+                        p.camX, p.camY, p.camW, p.camH, BACKGROUND, scenario.weapon != null ? this::drawArc : null);
             }
             if (split) collectStripMarkers();
         } finally {
@@ -224,16 +180,44 @@ final class PreviewSession {
         renderMs += (System.nanoTime() - t0) / 1e6;
         renders++;
         if (split) drawSplitDecorations(x, y, w, h, alpha);
+        drawHud(alpha);
+    }
+
+    /**
+     * Under the host (first pane): the weapon's readout, or the carrier's fighter wings. The dummy's in the corner of the
+     * pane showing it.
+     */
+    private void drawHud(float alpha) {
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_LINE_BIT);
+        try {
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            Pane hostPane = panes[0];
+            if (scenario.weapon != null) {
+                hud.drawWeapon(scenario.weapon, hostPane.uiX, hostPane.uiY, hostPane.uiW, hostPane.uiH, alpha);
+            } else {
+                hud.drawWings(scenario.host, hostPane.uiX, hostPane.uiY, hostPane.uiW, hostPane.uiH, alpha);
+            }
+            ShipAPI target = scenario.target();
+            if (target != null && target.isAlive()) {
+                Pane p = panes[paneCount - 1];
+                hud.drawTarget(target, p.uiX, p.uiY, p.uiW, p.uiH, alpha);
+            }
+        } finally {
+            GL11.glPopAttrib();
+        }
     }
 
     /** Gives the engine back: normally its scene is just cleared; after a failure the engine is rebuilt. */
     void dispose(boolean failed) {
         if (disposed) return;
         disposed = true;
+        hud.dispose();
         PreviewSound.release();
-        if (failed) SandboxHost.discard("preview of " + weaponId + " failed");
+        if (failed) SandboxHost.discard("preview of " + subject + " failed");
         else SandboxHost.release(this);
-        Log.debug("session for %s ended after %d frames (avg sim %.2f ms, render %.2f ms, kills %d); %s", weaponId,
+        Log.debug("session for %s ended after %d frames (avg sim %.2f ms, render %.2f ms, kills %d); %s", subject,
                 frames, frames > 0 ? simMs / frames : 0, renders > 0 ? renderMs / renders : 0,
                 scenario != null ? scenario.kills() : 0, SandboxHost.heap());
     }

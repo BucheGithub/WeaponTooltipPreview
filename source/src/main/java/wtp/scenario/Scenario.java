@@ -13,6 +13,10 @@ import com.fs.starfarer.api.combat.WeaponAPI;
 import com.fs.starfarer.api.combat.WeaponGroupAPI;
 import com.fs.starfarer.api.fleet.FleetMemberAPI;
 import com.fs.starfarer.api.fleet.FleetMemberType;
+import com.fs.starfarer.api.loading.FighterWingSpecAPI;
+import com.fs.starfarer.api.loading.WeaponGroupSpec;
+import com.fs.starfarer.api.loading.WeaponGroupType;
+import com.fs.starfarer.api.loading.WeaponSlotAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
 import com.fs.starfarer.api.mission.FleetSide;
 import org.lwjgl.util.vector.Vector2f;
@@ -23,8 +27,8 @@ import java.util.ArrayList;
 import java.util.Locale;
 
 /**
- * One preview scene in a sandbox engine: the host ship carrying the hovered weapon at {@link #origin}, plus whatever
- * the weapon is shown against. Everything here runs while the sandbox is swapped in.
+ * One preview scene in a sandbox engine: the host ship carrying the hovered weapon (or launching the hovered wing) at
+ * {@link #origin}, plus whatever it is shown against. Everything here runs while the sandbox is swapped in.
  * <p>
  * Combat sides matter: deployment takes a ship's owner from its FleetMember, not from the fleet manager it is spawned
  * through, and factory-made members all share the default owner. Every member gets its owner before spawning, or
@@ -41,10 +45,13 @@ public abstract class Scenario {
      * guidance and flaming out) and weapons disabled. Raising CR after spawn undoes none of it.
      */
     static final float DEPLOY_CR = 0.7f;
-    /** Fallback dummy if the chosen variant is missing, and the swarm's hidden missile launcher. */
+    /** Fallback dummy if the chosen variant is missing. */
     static final String DEFAULT_ENEMY_VARIANT = "hammerhead_Balanced";
+    /** A dummy's point defense, one per slot that takes one: PD lasers where energy fits, Vulcans where ballistic does. */
+    private static final String[] DUMMY_POINT_DEFENSE = {"pdlaser", "vulcan"};
 
     protected final CombatEngineAPI engine;
+    /** The previewed weapon; null in wing scenes. */
     protected final WeaponSpecAPI spec;
     protected final RefitShip refit;
     protected final Vector2f origin;
@@ -52,6 +59,7 @@ public abstract class Scenario {
     private String hostSource = "generic";
 
     public ShipAPI host;
+    /** The previewed weapon on the host; null in wing scenes. */
     public WeaponAPI weapon;
     /** World framing fixed at spawn (the camera never chases moving ships): x extent, centre line, half height. */
     public float frameMinX, frameMaxX, frameCenterY, frameHalfHeight;
@@ -65,26 +73,30 @@ public abstract class Scenario {
         this.origin = origin;
     }
 
-    public static Scenario create(CombatEngineAPI engine, String weaponId, RefitShip refit, Vector2f origin) {
-        WeaponSpecAPI spec = Global.getSettings().getWeaponSpec(weaponId);
-        if (spec == null) throw new NoPreviewException("unknown weapon " + weaponId);
+    public static Scenario create(CombatEngineAPI engine, PreviewSubject subject, RefitShip refit, Vector2f origin) {
         ShipVariantAPI dummy = enemyVariant(WtpSettings.dummyVariant());
-        switch (PreviewKind.of(spec)) {
-            case SWARM:
-                return new SwarmScenario(engine, spec, refit, origin);
-            case SHIP_WITH_SALVOS:
-                return new ShipScenario(engine, spec, refit, origin, dummy, WtpSettings.shieldMode(), true);
-            default:
-                return new ShipScenario(engine, spec, refit, origin, dummy, WtpSettings.shieldMode(), false);
+        if (subject.isWing()) {
+            FighterWingSpecAPI wing = null;
+            try {
+                wing = Global.getSettings().getFighterWingSpec(subject.id);
+            } catch (RuntimeException ignored) {
+            }
+            if (wing == null) throw new NoPreviewException("unknown wing " + subject.id);
+            return new WingScenario(engine, wing, refit, origin, dummy, WtpSettings.shieldMode());
         }
+        WeaponSpecAPI spec = Global.getSettings().getWeaponSpec(subject.id);
+        if (spec == null) throw new NoPreviewException("unknown weapon " + subject.id);
+        boolean pointDefense = PreviewKind.of(spec) == PreviewKind.POINT_DEFENSE;
+        return new ShipScenario(engine, spec, refit, origin, dummy, WtpSettings.shieldMode(), pointDefense);
     }
 
     public final void spawn() {
         spawnHost();
         spawnScene();
-        Log.debug("scene %s: host=%s (%s) slot=%s range=%.0f origin=(%.0f,%.0f) frame x %.0f..%.0f ±%.0f; %s",
-                getClass().getSimpleName(), host.getHullSpec().getHullId(), hostSource, weapon.getSlot().getId(),
-                weapon.getRange(), origin.x, origin.y, frameMinX, frameMaxX, frameHalfHeight, describe());
+        Log.debug("scene %s: host=%s (%s)%s origin=(%.0f,%.0f) frame x %.0f..%.0f ±%.0f; %s",
+                getClass().getSimpleName(), host.getHullSpec().getHullId(), hostSource,
+                weapon != null ? String.format(Locale.ROOT, " slot=%s range=%.0f", weapon.getSlot().getId(),
+                        weapon.getRange()) : "", origin.x, origin.y, frameMinX, frameMaxX, frameHalfHeight, describe());
     }
 
     /** Places what the weapon is shown against and sets the framing. */
@@ -123,6 +135,7 @@ public abstract class Scenario {
 
     /** Periodic diagnostics line. */
     public String diagnostics() {
+        if (weapon == null) return "";
         WeaponGroupAPI group = host.getWeaponGroupFor(weapon);
         AutofireAIPlugin ai = group != null && group.isAutofiring() ? group.getAutofirePlugin(weapon) : null;
         String autofire = ai == null ? "off" : String.format(Locale.ROOT, "on target=%s missile=%s fire=%s",
@@ -136,8 +149,13 @@ public abstract class Scenario {
 
     // ------------------------------------------------------------------ host
 
+    /** The host and where the previewed weapon sits on it; wing scenes plan a carrier instead. */
+    protected HostFactory.HostPlan planHost() {
+        return HostFactory.plan(spec, refit);
+    }
+
     private void spawnHost() {
-        HostFactory.HostPlan plan = HostFactory.plan(spec, refit);
+        HostFactory.HostPlan plan = planHost();
         hostSource = plan.source;
         FleetMemberAPI member = Global.getFactory().createFleetMember(FleetMemberType.SHIP, plan.variant);
         float hostCr = DEPLOY_CR;
@@ -157,10 +175,12 @@ public abstract class Scenario {
         // Preview conditions, not weapon stats: a freshly deployed ship that never degrades.
         host.getMutableStats().getPeakCRDuration().modifyFlat(MOD_ID, 1e6f);
         host.getMutableStats().getCRLossPerSecondPercent().modifyMult(MOD_ID, 0f);
-        for (WeaponAPI w : host.getAllWeapons()) {
-            if (w.getId().equals(spec.getWeaponId())) weapon = w;
+        if (plan.slotId != null) {
+            for (WeaponAPI w : host.getAllWeapons()) {
+                if (w.getSlot().getId().equals(plan.slotId) && w.getId().equals(spec.getWeaponId())) weapon = w;
+            }
+            if (weapon == null) throw new IllegalStateException("weapon missing on spawned host");
         }
-        if (weapon == null) throw new IllegalStateException("weapon missing on spawned host");
         host.setShipAI(new PreviewAIs.HoldAI(host));
         if (host.getShield() != null && host.getShield().isOn()) host.getShield().toggleOff();
     }
@@ -175,7 +195,7 @@ public abstract class Scenario {
         weapon.setSuspendAutomaticTurning(!on);
     }
 
-    /** A refit host keeps built-in weapons; only the previewed weapon may fire. */
+    /** A refit host keeps built-in weapons; only the previewed weapon may fire (none at all in wing scenes). */
     private void silenceOtherWeapons() {
         for (WeaponAPI w : host.getAllWeapons()) {
             if (w != weapon) w.setForceNoFireOneFrame(true);
@@ -213,6 +233,11 @@ public abstract class Scenario {
 
     /** An enemy ship stripped of its weapons and fighters, deployed at full readiness with the enemy owner. */
     protected ShipAPI spawnEnemyShip(ShipVariantAPI stock, Vector2f at, float facing) {
+        return spawnEnemyShip(stock, at, facing, false);
+    }
+
+    /** As above; with {@code pointDefense}, re-armed with light PD on autofire (see {@link #DUMMY_POINT_DEFENSE}). */
+    protected ShipAPI spawnEnemyShip(ShipVariantAPI stock, Vector2f at, float facing, boolean pointDefense) {
         ShipVariantAPI variant = stock.clone();
         for (String slotId : new ArrayList<>(variant.getFittedWeaponSlots())) variant.clearSlot(slotId);
         for (int i = 0; i < variant.getWings().size(); i++) {
@@ -221,12 +246,39 @@ public abstract class Scenario {
             } catch (RuntimeException ignored) {
             }
         }
+        if (pointDefense) armWithPointDefense(variant);
         FleetMemberAPI member = Global.getFactory().createFleetMember(FleetMemberType.SHIP, variant);
         prepareForDeployment(member, DEPLOY_CR, ENEMY_OWNER);
         engine.getFleetManager(FleetSide.ENEMY).setSuppressDeploymentMessages(true);
         ShipAPI ship = engine.getFleetManager(FleetSide.ENEMY).spawnFleetMember(member, new Vector2f(at), facing, 0f);
         enforceOwner(ship, ENEMY_OWNER);
+        if (pointDefense) {
+            for (WeaponGroupAPI group : ship.getWeaponGroupsCopy()) {
+                if (!group.isAutofiring()) group.toggleOn();
+            }
+        }
         return ship;
+    }
+
+    /** One light PD weapon in every slot that takes one (small and medium energy or ballistic), all in one group. */
+    private static void armWithPointDefense(ShipVariantAPI variant) {
+        variant.getWeaponGroups().clear();
+        WeaponGroupSpec group = new WeaponGroupSpec(WeaponGroupType.LINKED);
+        group.setAutofireOnByDefault(true);
+        for (WeaponSlotAPI slot : variant.getHullSpec().getAllWeaponSlotsCopy()) {
+            if (!slot.isWeaponSlot() || slot.isBuiltIn() || slot.isDecorative() || slot.isSystemSlot() || slot.isHidden()) {
+                continue;
+            }
+            for (String weaponId : DUMMY_POINT_DEFENSE) {
+                WeaponSpecAPI pd = Global.getSettings().getWeaponSpec(weaponId);
+                if (pd != null && slot.weaponFits(pd)) {
+                    variant.addWeapon(slot.getId(), weaponId);
+                    group.addSlot(slot.getId());
+                    break;
+                }
+            }
+        }
+        if (!group.getSlots().isEmpty()) variant.addWeaponGroup(group);
     }
 
     /**

@@ -36,8 +36,13 @@ import java.util.Set;
 public final class EngineSandbox {
 
     private static final String[] ANIM_GROUPS = {"CEanim", "CENonPauseanim"};
-    /** GraphicsLib post-processes the full screen and reloads ship textures on combat start. */
-    private static final String[] STRIPPED_PLUGIN_PREFIXES = {"org.dark.shaders.", "org.dark.graphics."};
+    /**
+     * Combat plugins set up for a real battle, screen-wide: GraphicsLib post-processes the full screen and reloads ship
+     * textures, BoxUtil installs its shader passes (blur, bloom) and cleans up its campaign rendering, UIUtil clears its
+     * global UI state and takes over as the combat UI.
+     */
+    private static final String[] STRIPPED_PLUGIN_PREFIXES = {"org.dark.shaders.", "org.dark.graphics.", "org.boxutil.",
+            "org.luoxb.uiutil."};
     private static final float MAP_HALF_SIZE = 15000f;
     /** Scenes extend toward +x from their origin (host at the origin, targets and waves at weapon range). */
     private static final float SCENE_ORIGIN_X = -5000f;
@@ -71,11 +76,13 @@ public final class EngineSandbox {
             Object map = Refl.newInstance(ObfBridge.mapClass);
             ObfBridge.mapSetBounds.invoke(map, -MAP_HALF_SIZE, MAP_HALF_SIZE, -MAP_HALF_SIZE, MAP_HALF_SIZE);
             ObfBridge.engineSetCombatMap.invoke(sandbox.engine, map);
+            // setCombatMap() instantiates the settings plugins and init() calls their init(): stripped in between, a
+            // plugin never sets anything up.
+            sandbox.stripPlugins(map);
             ObfBridge.engineCreateDummyFleets.invoke(sandbox.engine);
             ObfBridge.engineInit.invoke(sandbox.engine);
             ObfBridge.engineSetPaused.invoke(sandbox.engine, false);
             ObfBridge.enginePreCombat.invoke(sandbox.engine);
-            sandbox.stripPlugins(map);
             sandbox.api().setDoNotEndCombat(true);
             ok = true;
         } finally {
@@ -171,16 +178,10 @@ public final class EngineSandbox {
      * Renders the world rectangle (llx, lly, w, h) into the scissored pixel rectangle (px, py, pw, ph) of the current
      * framebuffer, then runs {@code worldOverlay} in the same world projection. Mirrors the title screen's projection
      * helper. Rendering straight to the screen matters: ship sprites are composited with a destination-alpha mask, so
-     * an offscreen target's alpha channel is garbage.
-     * <p>
-     * {@code screenOverlay} then runs in screen space, for HUD renderers that place themselves through the viewport's
-     * world→screen conversion. That conversion always spans the game's full screen, so the viewport is re-aimed at a
-     * virtual full screen in which this rectangle (uiW × uiH UI units) is the bottom-right corner: HUD elements keep
-     * their in-combat size, and the HUD's own keep-on-screen logic keeps them off the rectangle's right edge, where the
-     * target sits. Call while swapped in.
+     * an offscreen target's alpha channel is garbage. Call while swapped in.
      */
-    public void render(int px, int py, int pw, int ph, float llx, float lly, float w, float h, float uiW, float uiH,
-                       float[] clearRgb, Runnable worldOverlay, Runnable screenOverlay) {
+    public void render(int px, int py, int pw, int ph, float llx, float lly, float w, float h, float[] clearRgb,
+                       Runnable worldOverlay) {
         requireSwapped();
         ViewportAPI viewport = api().getViewport();
         // set() derives viewMult from the screen width; pick ratios so viewMult = world units per target pixel.
@@ -215,30 +216,6 @@ public final class EngineSandbox {
             GL11.glEnable(GL11.GL_SCISSOR_TEST); // resetFixedFunctionState() disables it; stay inside the rectangle
             ObfBridge.engineRender.invoke(engine, false);
             if (worldOverlay != null) worldOverlay.run();
-            if (screenOverlay != null) {
-                // The game's screen width in its own units, recovered from set(): viewMult = w * ratioX / screenWidth.
-                float screenW = w * ratioX / viewport.getViewMult();
-                float screenH = screenW * Global.getSettings().getScreenHeight() / Global.getSettings().getScreenWidth();
-                float worldPerUi = w / uiW;
-                float ox = screenW - uiW;
-                ObfBridge.viewportSetXRatio.invoke(viewport, 1f);
-                ObfBridge.viewportSetYRatio.invoke(viewport, 1f);
-                viewport.set(llx - ox * worldPerUi, lly, screenW * worldPerUi, screenH * worldPerUi);
-                GL11.glMatrixMode(GL11.GL_PROJECTION);
-                GL11.glLoadIdentity();
-                GL11.glOrtho(ox, ox + uiW, 0, uiH, -4000, 4000);
-                GL11.glMatrixMode(GL11.GL_MODELVIEW);
-                GL11.glLoadIdentity();
-                resetFixedFunctionState();
-                GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                try {
-                    screenOverlay.run();
-                } finally {
-                    ObfBridge.viewportSetXRatio.invoke(viewport, ratioX);
-                    ObfBridge.viewportSetYRatio.invoke(viewport, ratioY);
-                    viewport.set(llx, lly, w, h);
-                }
-            }
         } finally {
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
             GL11.glPopMatrix();
