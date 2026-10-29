@@ -1,0 +1,12 @@
+{
+	"masterVersionFile":"https://raw.githubusercontent.com/BucheGithub/WeaponTooltipPreview/main/WeaponTooltipPreview/WeaponTooltipPreview.version",
+	"modName":"Weapon Tooltip Preview",
+	"modVersion":
+	{
+		"major":0,
+		"minor":3,
+		"patch":0
+	},
+	"directDownloadURL":"https://github.com/BucheGithub/WeaponTooltipPreview/releases/latest/download/WeaponTooltipPreview.zip",
+	"changelogURL":"https://raw.githubusercontent.com/BucheGithub/WeaponTooltipPreview/main/WeaponTooltipPreview/CHANGELOG.md"
+}

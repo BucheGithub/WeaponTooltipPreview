@@ -4,6 +4,7 @@ import com.fs.starfarer.api.campaign.CustomUIPanelPlugin;
 import com.fs.starfarer.api.input.InputEventAPI;
 import com.fs.starfarer.api.ui.PositionAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
+import com.fs.starfarer.api.util.Misc;
 import org.lwjgl.opengl.GL11;
 import wtp.Log;
 import wtp.scenario.NoPreviewException;
@@ -83,13 +84,8 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glColor4f(0.02f, 0.035f, 0.055f, alphaMult);
-        GL11.glBegin(GL11.GL_QUADS);
-        GL11.glVertex2f(pos.getX(), pos.getY());
-        GL11.glVertex2f(pos.getX() + pos.getWidth(), pos.getY());
-        GL11.glVertex2f(pos.getX() + pos.getWidth(), pos.getY() + pos.getHeight());
-        GL11.glVertex2f(pos.getX(), pos.getY() + pos.getHeight());
-        GL11.glEnd();
+        Misc.renderQuad(pos.getX(), pos.getY(), pos.getWidth(), pos.getHeight(), PreviewSession.BACKGROUND_COLOR,
+                alphaMult);
         GL11.glPopAttrib();
     }
 

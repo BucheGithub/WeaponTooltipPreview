@@ -13,6 +13,8 @@ import com.fs.starfarer.api.fleet.FleetMemberType;
 import com.fs.starfarer.api.graphics.SpriteAPI;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.FormationType;
+import com.fs.starfarer.api.util.Misc;
+import org.lazywizard.lazylib.MathUtils;
 import org.lazywizard.lazylib.ui.FontException;
 import org.lazywizard.lazylib.ui.LazyFont;
 import org.lwjgl.opengl.GL11;
@@ -145,7 +147,7 @@ final class PreviewHud {
         if (f == null) return;
 
         float rowH = rowHeight(f);
-        float barW = clamp(paneW * 0.4f - LABEL_W - 2f * PAD, BAR_MIN_W, BAR_MAX_W);
+        float barW = MathUtils.clamp(paneW * 0.4f - LABEL_W - 2f * PAD, BAR_MIN_W, BAR_MAX_W);
         float blockW = 2f * PAD + LABEL_W + barW;
         float blockH = 2f * PAD + 2f * rowH;
         float right = paneX + paneW - MARGIN, top = paneY + paneH - MARGIN;
@@ -205,8 +207,7 @@ final class PreviewHud {
             GL11.glStencilOp(GL11.GL_REPLACE, GL11.GL_REPLACE, GL11.GL_REPLACE);
             float clear = ship.getCollisionRadius() * 4f * scale;
             GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glColor4f(1f, 1f, 1f, 1f);
-            quad(cx - clear, cy - clear, 2f * clear, 2f * clear);
+            Misc.renderQuad(cx - clear, cy - clear, 2f * clear, 2f * clear, Color.WHITE, 1f);
             GL11.glAlphaFunc(GL11.GL_GREATER, 0f);
             GL11.glStencilFunc(GL11.GL_EQUAL, 1, 1);
             GL11.glStencilOp(GL11.GL_REPLACE, GL11.GL_REPLACE, GL11.GL_REPLACE);
@@ -231,16 +232,17 @@ final class PreviewHud {
                 for (int y = 0; y < gh; y++) {
                     float grow = Math.max(0f, reveal[x][y]);
                     float side = cell * grow;
-                    float f = clamp(grid.getArmorFraction(x, y), 0f, 1f);
-                    GL11.glColor4f((int) (f * 230f + 25f) / 255f, (int) (f * 75f + 25f) / 255f, 25f / 255f,
-                            (int) (CELL_ALPHA * alpha * grow) / 255f);
-                    quad(x0 + x * cell + (cell - side) / 2f, y0 + y * cell + (cell - side) / 2f, side, side);
+                    float f = MathUtils.clamp(grid.getArmorFraction(x, y), 0f, 1f);
+                    Color c = new Color((int) (f * 230f + 25f), (int) (f * 75f + 25f), 25,
+                            (int) (CELL_ALPHA * alpha * grow));
+                    Misc.renderQuad(x0 + x * cell + (cell - side) / 2f, y0 + y * cell + (cell - side) / 2f, side, side,
+                            c, 1f);
                 }
             }
 
             if (spotlight != null) {
                 spotlight.setSize(size, size);
-                spotlight.setAlphaMult(alpha * clamp(ship.getHitpoints() / Math.max(1f, ship.getMaxHitpoints()), 0f, 1f));
+                spotlight.setAlphaMult(alpha * MathUtils.clamp(ship.getHitpoints() / Math.max(1f, ship.getMaxHitpoints()), 0f, 1f));
                 spotlight.renderAtCenter(cx - ix, cy - iy);
             }
 
@@ -394,12 +396,12 @@ final class PreviewHud {
         if (weapon.usesAmmo()) {
             boolean regenerates = weapon.getAmmoTracker().getAmmoPerSecond() > 0f;
             if (regenerates && weapon.getAmmo() < weapon.getMaxAmmo()) {
-                return clamp(weapon.getAmmoTracker().getReloadProgress(), 0f, 1f);
+                return MathUtils.clamp(weapon.getAmmoTracker().getReloadProgress(), 0f, 1f);
             }
             if (weapon.getAmmo() <= 0) return 0f;
         }
         float cooldown = weapon.getCooldown();
-        return cooldown > 0f ? clamp(1f - weapon.getCooldownRemaining() / cooldown, 0f, 1f) : 1f;
+        return cooldown > 0f ? MathUtils.clamp(1f - weapon.getCooldownRemaining() / cooldown, 0f, 1f) : 1f;
     }
 
     // ------------------------------------------------------------------ wings
@@ -513,8 +515,7 @@ final class PreviewHud {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glColorMask(false, false, false, true);
-        GL11.glColor4f(0f, 0f, 0f, 0f);
-        quad(x - reach, y - reach, 2f * reach, 2f * reach);
+        Misc.renderQuad(x - reach, y - reach, 2f * reach, 2f * reach, Color.BLACK, 0f);
         hull.setAlphaMult(a);
         hull.setBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ZERO);
         hull.renderAtCenter(x, y);
@@ -534,8 +535,7 @@ final class PreviewHud {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glColorMask(false, false, false, true);
-        GL11.glColor4f(1f, 1f, 1f, 1f);
-        quad(x - reach, y - reach, 2f * reach, 2f * reach);
+        Misc.renderQuad(x - reach, y - reach, 2f * reach, 2f * reach, Color.WHITE, 1f);
         GL11.glColorMask(true, true, true, true);
     }
 
@@ -590,7 +590,7 @@ final class PreviewHud {
         FighterWingAPI wing = bay.getWing();
         if (wing.getWingMembers().size() >= wing.getSpec().getNumFighters()) return 1f;
         float interval = bay.getCurrReplacementIntervalDuration();
-        return interval > 0f ? clamp(1f - bay.getTimeUntilNextReplacement() / interval, 0f, 1f) : 0f;
+        return interval > 0f ? MathUtils.clamp(1f - bay.getTimeUntilNextReplacement() / interval, 0f, 1f) : 0f;
     }
 
     // ------------------------------------------------------------------ drawing
@@ -600,27 +600,20 @@ final class PreviewHud {
      * the fill as the flux bar does: hard flux solid, the soft flux beyond it dimmer.
      */
     private static void bar(float x, float y, float w, float h, Color c, float fill, float hard, float alpha) {
-        float f = clamp(fill, 0f, 1f);
+        float f = MathUtils.clamp(fill, 0f, 1f);
         if (hard >= 0f) {
-            float hf = Math.min(f, clamp(hard, 0f, 1f));
-            color(c, alpha);
-            quad(x, y, w * hf, h);
-            color(c, 0.55f * alpha);
-            quad(x + w * hf, y, w * (f - hf), h);
+            float hf = Math.min(f, MathUtils.clamp(hard, 0f, 1f));
+            Misc.renderQuad(x, y, w * hf, h, c, alpha);
+            Misc.renderQuad(x + w * hf, y, w * (f - hf), h, c, 0.55f * alpha);
         } else {
-            color(c, alpha);
-            quad(x, y, w * f, h);
+            Misc.renderQuad(x, y, w * f, h, c, alpha);
         }
-        if (f < 0.995f) {
-            color(c, alpha);
-            quad(x + w - 1f, y - 1f, 1f, h + 2f);
-        }
+        if (f < 0.995f) Misc.renderQuad(x + w - 1f, y - 1f, 1f, h + 2f, c, alpha);
     }
 
     /** Dark backing so the text reads over ships, shots and explosions. */
     private static void panel(float x, float y, float w, float h, float alpha) {
-        GL11.glColor4f(0f, 0f, 0f, PANEL_ALPHA * alpha);
-        quad(x, y, w, h);
+        Misc.renderQuad(x, y, w, h, Color.BLACK, PANEL_ALPHA * alpha);
     }
 
     private void text(String slot, String text, Color color, float x, float top, float alpha) {
@@ -642,7 +635,7 @@ final class PreviewHud {
         } else if (!text.equals(s.getText())) {
             s.setText(text);
         }
-        int a = Math.round(255f * clamp(alpha, 0f, 1f));
+        int a = Math.round(255f * MathUtils.clamp(alpha, 0f, 1f));
         Color current = s.getBaseColor();
         if (current == null || current.getAlpha() != a || (current.getRGB() & 0xFFFFFF) != (color.getRGB() & 0xFFFFFF)) {
             s.setBaseColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), a));
@@ -705,22 +698,5 @@ final class PreviewHud {
     /** Bars sit on the text's vertical middle. */
     private static float barY(float rowTop, float rowH, float barH) {
         return rowTop - (rowH - 3f) / 2f - barH / 2f;
-    }
-
-    private static void color(Color c, float alpha) {
-        GL11.glColor4f(c.getRed() / 255f, c.getGreen() / 255f, c.getBlue() / 255f, alpha);
-    }
-
-    private static void quad(float x, float y, float w, float h) {
-        GL11.glBegin(GL11.GL_QUADS);
-        GL11.glVertex2f(x, y);
-        GL11.glVertex2f(x + w, y);
-        GL11.glVertex2f(x + w, y + h);
-        GL11.glVertex2f(x, y + h);
-        GL11.glEnd();
-    }
-
-    private static float clamp(float v, float min, float max) {
-        return Math.max(min, Math.min(max, v));
     }
 }

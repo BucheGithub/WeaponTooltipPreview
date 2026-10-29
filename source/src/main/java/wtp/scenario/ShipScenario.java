@@ -9,6 +9,10 @@ import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.ShipHullSpecAPI;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
+import com.fs.starfarer.api.util.Misc;
+import org.lazywizard.lazylib.MathUtils;
+import org.lazywizard.lazylib.VectorUtils;
+import org.lazywizard.lazylib.combat.AIUtils;
 import org.lwjgl.util.vector.Vector2f;
 import wtp.Log;
 
@@ -207,66 +211,50 @@ final class ShipScenario extends Scenario {
     }
 
     /**
-     * Point defense first: the threat the waves pick, led for the weapon's shots and fired at once in range and inside
-     * the arc. Otherwise the dummy.
+     * Point defense first: the threat the waves pick, led for the weapon's shots and fired at once in range and with
+     * the aim point inside the arc. Otherwise the dummy. Range and aim tolerance use the game's targeting radius.
      */
     private void aimAndFire(float dt) {
         engaged = waves != null ? waves.pick(weapon.getLocation(), weapon.getRange() * THREAT_RANGE_FACTOR) : null;
         if (engaged != null) {
             Vector2f aim = lead(engaged);
-            float distance = Vector2f.sub(engaged.getLocation(), weapon.getLocation(), new Vector2f()).length();
-            boolean inRange = distance <= weapon.getRange() + engaged.getCollisionRadius();
+            float radius = Misc.getTargetingRadius(weapon.getLocation(), engaged, true);
+            float distance = MathUtils.getDistance(weapon.getLocation(), engaged.getLocation());
+            boolean inRange = distance <= weapon.getRange() + radius;
             // Small, close targets: anywhere on their silhouette will do.
-            float tolerance = Math.max(AIM_TOLERANCE_DEGREES,
-                    (float) Math.toDegrees(Math.atan2(engaged.getCollisionRadius(), Math.max(1f, distance))));
-            turnAndFire(aim, dt, inRange && inArc(angleTo(weapon.getLocation(), aim)), tolerance);
+            float tolerance = Math.max(AIM_TOLERANCE_DEGREES, Misc.computeAngleSpan(radius, Math.max(1f, distance)));
+            turnAndFire(aim, dt, inRange && weapon.distanceFromArc(aim) == 0f, tolerance);
         } else if (target != null && target.isAlive()) {
             turnAndFire(target.getLocation(), dt, true, AIM_TOLERANCE_DEGREES);
         }
     }
 
-    /** Turns the weapon toward {@code point} at its real turn rate, inside its arc, and fires once lined up. */
+    /**
+     * Turns the weapon toward {@code point} at its real turn rate, the short way round and inside its arc, and fires
+     * once lined up. Not LazyLib's WeaponUtils.aimTowardsPoint: it turns by the raw angle difference, so a target just
+     * across 0°/360° from the weapon (anything straight ahead) sends it the long way round, into the edge of its arc.
+     */
     private void turnAndFire(Vector2f point, float dt, boolean mayFire, float tolerance) {
-        float desired = angleTo(weapon.getLocation(), point);
+        float desired = VectorUtils.getAngle(weapon.getLocation(), point);
         if (weapon.getArc() < 359f) {
             float centre = host.getFacing() + weapon.getArcFacing();
             float half = weapon.getArc() / 2f;
-            desired = centre + Math.max(-half, Math.min(half, shortestAngle(centre, desired)));
+            desired = centre + MathUtils.clamp(MathUtils.getShortestRotation(centre, desired), -half, half);
         }
-        float current = weapon.getCurrAngle();
         float maxTurn = weapon.getTurnRate() * dt;
-        float next = current + Math.max(-maxTurn, Math.min(maxTurn, shortestAngle(current, desired)));
-        weapon.setCurrAngle(next);
-        if (mayFire && Math.abs(shortestAngle(next, desired)) < tolerance) weapon.setForceFireOneFrame(true);
-    }
-
-    private boolean inArc(float angle) {
-        if (weapon.getArc() >= 359f) return true;
-        return Math.abs(shortestAngle(host.getFacing() + weapon.getArcFacing(), angle)) <= weapon.getArc() / 2f;
+        float current = weapon.getCurrAngle();
+        weapon.setCurrAngle(current + MathUtils.clamp(MathUtils.getShortestRotation(current, desired), -maxTurn, maxTurn));
+        if (mayFire && Misc.getAngleDiff(weapon.getCurrAngle(), desired) < tolerance) weapon.setForceFireOneFrame(true);
     }
 
     /**
-     * Where to aim to meet a moving entity with this weapon's shots (the host holds still): the earliest t with
-     * |r + v·t| = speed·t. Beams, and targets the shots cannot catch, are aimed at directly.
+     * Where to aim to meet a moving entity with this weapon's shots (the host holds still). Beams, and targets the
+     * shots cannot catch, are aimed at directly.
      */
     private Vector2f lead(CombatEntityAPI e) {
-        Vector2f p = e.getLocation(), v = e.getVelocity();
         float speed = weapon.getProjectileSpeed();
-        if (weapon.isBeam() || speed <= 1f) return p;
-        float rx = p.x - weapon.getLocation().x, ry = p.y - weapon.getLocation().y;
-        float a = v.x * v.x + v.y * v.y - speed * speed;
-        float b = 2f * (rx * v.x + ry * v.y);
-        float c = rx * rx + ry * ry;
-        float t;
-        if (Math.abs(a) < 1e-3f) {
-            t = b < 0f ? -c / b : -1f;
-        } else {
-            float disc = b * b - 4f * a * c;
-            if (disc < 0f) return p;
-            float root = (float) Math.sqrt(disc);
-            float t1 = (-b - root) / (2f * a), t2 = (-b + root) / (2f * a);
-            t = t1 > 0f && (t2 <= 0f || t1 < t2) ? t1 : t2;
-        }
-        return t > 0f ? new Vector2f(p.x + v.x * t, p.y + v.y * t) : p;
+        if (weapon.isBeam() || speed <= 1f) return e.getLocation();
+        Vector2f intercept = AIUtils.getBestInterceptPoint(weapon.getLocation(), speed, e.getLocation(), e.getVelocity());
+        return intercept != null ? intercept : e.getLocation();
     }
 }

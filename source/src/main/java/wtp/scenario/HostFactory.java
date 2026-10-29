@@ -32,6 +32,11 @@ final class HostFactory {
     private static final String[] HOSTS = {"wayfarer", "vigilance", "prometheus2"};
     /** Generic carriers, smallest first: Condor (destroyer, two bays), Drover, Heron. */
     private static final String[] CARRIERS = {"condor", "drover", "heron"};
+    /**
+     * Hullmods a weapon cannot fire without, by weapon tag, given to generic hosts: Threat fragment weapons fire
+     * fragments from the ship's swarm, which only Fragment Swarm creates (without it the game disables them).
+     */
+    private static final String[][] REQUIRED_HULLMODS = {{"fragment", "fragment_swarm"}};
 
     static final class HostPlan {
         final ShipVariantAPI variant;
@@ -125,7 +130,7 @@ final class HostFactory {
             ShipVariantAPI variant = Global.getSettings().createEmptyVariant(Scenario.MOD_ID + "_host", hull);
             variant.addWeapon(slot.getId(), spec.getWeaponId());
             soloWeaponGroup(variant, slot.getId());
-            return new HostPlan(variant, slot, "generic", false);
+            return new HostPlan(variant, slot, "generic" + addRequiredHullmods(variant, spec), false);
         }
         // A weapon that only exists built in fits no slot: a hull that has it built in. Ships with modules qualify
         // here: an empty variant has no modules, so they deploy as if their modules were already destroyed.
@@ -137,9 +142,29 @@ final class HostFactory {
             ShipVariantAPI variant = Global.getSettings().createEmptyVariant(Scenario.MOD_ID + "_host", hull);
             if (!spec.getWeaponId().equals(variant.getWeaponId(slot.getId()))) variant.addWeapon(slot.getId(), spec.getWeaponId());
             soloWeaponGroup(variant, slot.getId());
-            return new HostPlan(variant, slot, "built-in on " + hull.getHullId(), false);
+            return new HostPlan(variant, slot, "built-in on " + hull.getHullId() + addRequiredHullmods(variant, spec),
+                    false);
         }
         return null;
+    }
+
+    /**
+     * Installs what the weapon needs to fire on a generic host (a refit ship is left as the player fitted it); returns
+     * the hullmods added, for the log.
+     */
+    private static String addRequiredHullmods(ShipVariantAPI variant, WeaponSpecAPI spec) {
+        StringBuilder added = new StringBuilder();
+        for (String[] rule : REQUIRED_HULLMODS) {
+            if (!spec.hasTag(rule[0]) || variant.hasHullMod(rule[1])) continue;
+            try {
+                Global.getSettings().getHullModSpec(rule[1]);
+                variant.addMod(rule[1]);
+                added.append(" + ").append(rule[1]);
+            } catch (RuntimeException e) {
+                Log.debug("%s needs hullmod %s, which is unavailable: %s", spec.getWeaponId(), rule[1], e);
+            }
+        }
+        return added.toString();
     }
 
     // ------------------------------------------------------------------ carriers

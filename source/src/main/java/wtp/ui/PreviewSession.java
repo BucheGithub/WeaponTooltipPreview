@@ -4,6 +4,10 @@ import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.combat.DamagingProjectileAPI;
 import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.WeaponAPI;
+import com.fs.starfarer.api.util.Misc;
+import org.lazywizard.lazylib.MathUtils;
+import org.lazywizard.lazylib.VectorUtils;
+import org.lazywizard.lazylib.opengl.DrawUtils;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.util.vector.Vector2f;
@@ -18,6 +22,8 @@ import wtp.sim.EngineSandbox;
 import wtp.sim.PreviewSound;
 import wtp.sim.SandboxHost;
 
+import java.awt.Color;
+
 /**
  * One preview: a scene in the shared sandbox engine, stepped from the panel's advance() and drawn straight into
  * scissored rectangles of the screen, like the title-screen battle. Long ranges switch to a split view: two close-up
@@ -27,6 +33,12 @@ import wtp.sim.SandboxHost;
 final class PreviewSession {
 
     private static final float[] BACKGROUND = {0.02f, 0.035f, 0.055f};
+    /** The scene's clear colour, for the panel's backing before the first frame. */
+    static final Color BACKGROUND_COLOR = new Color(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2]);
+    private static final Color STRIP_COLOR = new Color(BACKGROUND[0] * 0.6f, BACKGROUND[1] * 0.6f, BACKGROUND[2] * 0.6f);
+    private static final Color HOST_MARKER = new Color(0.55f, 0.9f, 0.55f);
+    private static final Color TARGET_MARKER = new Color(0.95f, 0.45f, 0.35f);
+    private static final Color SHOT_BLIP = new Color(1f, 0.9f, 0.5f);
     private static final float MAX_STEP = 1f / 30f;
     private static final float ARC_HALF_ANGLE_FOR_TURRETS = 25f;
     private static final Vector2f FAR_AWAY = new Vector2f(1e7f, 1e7f);
@@ -294,9 +306,8 @@ final class PreviewSession {
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
         // Gap and strip background.
-        GL11.glColor4f(BACKGROUND[0] * 0.6f, BACKGROUND[1] * 0.6f, BACKGROUND[2] * 0.6f, alpha);
-        quad(gapX, paneBottom, GAP_UI, h - STRIP_UI);
-        quad(x, y, w, STRIP_UI);
+        Misc.renderQuad(gapX, paneBottom, GAP_UI, h - STRIP_UI, STRIP_COLOR, alpha);
+        Misc.renderQuad(x, y, w, STRIP_UI, STRIP_COLOR, alpha);
 
         // Broken axis: one clean slash across the gap.
         GL11.glEnable(GL11.GL_LINE_SMOOTH);
@@ -336,28 +347,16 @@ final class PreviewSession {
         GL11.glLineWidth(1f);
 
         float hx = sx0 + (hostX - minX) / spanX * (sx1 - sx0);
-        GL11.glColor4f(0.55f, 0.9f, 0.55f, alpha);
-        quad(hx - 2f, sy - 2f, 4f, 4f);
+        Misc.renderQuad(hx - 2f, sy - 2f, 4f, 4f, HOST_MARKER, alpha);
         if (hasTarget) {
             float tx = sx0 + (targetX - minX) / spanX * (sx1 - sx0);
-            GL11.glColor4f(0.95f, 0.45f, 0.35f, alpha);
-            quad(tx - 2.5f, sy - 2.5f, 5f, 5f);
+            Misc.renderQuad(tx - 2.5f, sy - 2.5f, 5f, 5f, TARGET_MARKER, alpha);
         }
-        GL11.glColor4f(1f, 0.9f, 0.5f, alpha);
         for (int i = 0; i < blipCount; i++) {
             float bx = sx0 + (blips[i] - minX) / spanX * (sx1 - sx0);
-            quad(bx - 1f, sy - 1f, 2f, 2f);
+            Misc.renderQuad(bx - 1f, sy - 1f, 2f, 2f, SHOT_BLIP, alpha);
         }
         GL11.glPopAttrib();
-    }
-
-    private static void quad(float x, float y, float w, float h) {
-        GL11.glBegin(GL11.GL_QUADS);
-        GL11.glVertex2f(x, y);
-        GL11.glVertex2f(x + w, y);
-        GL11.glVertex2f(x + w, y + h);
-        GL11.glVertex2f(x, y + h);
-        GL11.glEnd();
     }
 
     private static int toPixels(float uiUnits) {
@@ -388,8 +387,7 @@ final class PreviewSession {
         float half;
         if (weapon.getArc() >= 359f) {
             ShipAPI target = scenario.target();
-            centre = target != null ? (float) Math.toDegrees(Math.atan2(target.getLocation().y - mount.y,
-                    target.getLocation().x - mount.x)) : 0f;
+            centre = target != null ? VectorUtils.getAngle(mount, target.getLocation()) : 0f;
             half = ARC_HALF_ANGLE_FOR_TURRETS;
         } else {
             centre = scenario.host.getFacing() + weapon.getArcFacing();
@@ -400,20 +398,14 @@ final class PreviewSession {
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glLineWidth(1.5f);
         GL11.glColor4f(0.45f, 0.85f, 1f, 0.6f);
-        GL11.glBegin(GL11.GL_LINE_STRIP);
-        int segments = 96;
-        for (int i = 0; i <= segments; i++) {
-            double a = Math.toRadians(centre - half + 2f * half * i / segments);
-            GL11.glVertex2f(mount.x + (float) Math.cos(a) * range, mount.y + (float) Math.sin(a) * range);
-        }
-        GL11.glEnd();
+        DrawUtils.drawArc(mount.x, mount.y, range, centre - half, 2f * half, 96, false);
         if (weapon.getArc() < 359f) {
             GL11.glColor4f(0.45f, 0.85f, 1f, 0.2f);
             GL11.glBegin(GL11.GL_LINES);
             for (float edge : new float[]{centre - half, centre + half}) {
-                double a = Math.toRadians(edge);
+                Vector2f end = MathUtils.getPointOnCircumference(mount, range, edge);
                 GL11.glVertex2f(mount.x, mount.y);
-                GL11.glVertex2f(mount.x + (float) Math.cos(a) * range, mount.y + (float) Math.sin(a) * range);
+                GL11.glVertex2f(end.x, end.y);
             }
             GL11.glEnd();
         }

@@ -5,7 +5,10 @@ import com.fs.starfarer.api.combat.FighterLaunchBayAPI;
 import com.fs.starfarer.api.combat.FighterWingAPI;
 import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
+import com.fs.starfarer.api.impl.campaign.ids.Tags;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
+import com.fs.starfarer.api.loading.WeaponSpecAPI;
+import org.lazywizard.lazylib.MathUtils;
 import org.lwjgl.util.vector.Vector2f;
 import wtp.Log;
 
@@ -20,6 +23,15 @@ final class WingScenario extends Scenario {
 
     /** Close enough to frame carrier, dummy and attack runs in one view, beyond the dummy's PD range. */
     private static final float DUMMY_DISTANCE = 1200f;
+    /** Wings with a shorter engagement range get the dummy this far into it. */
+    private static final float ENGAGEMENT_SHARE = 0.9f;
+    /**
+     * Wings that stay with the carrier (engagement range 0) get the dummy this far into their weapons' range, counted
+     * from the edge of the carrier, where they hold.
+     */
+    private static final float WEAPON_RANGE_SHARE = 0.8f;
+    /** Least space between carrier and dummy. */
+    private static final float MIN_GAP = 100f;
     private static final float SHIELD_PHASE = 6f;
     private static final float RESPAWN_DELAY = 3f;
     /** Room past the dummy and around the line for fighters swinging round on their attack runs. */
@@ -28,6 +40,8 @@ final class WingScenario extends Scenario {
     private final FighterWingSpecAPI wing;
     private final ShipVariantAPI dummy;
     private final ShieldMode shieldMode;
+    /** The wing's engagement range is 0: it escorts the carrier instead of flying out to the dummy. */
+    private boolean escorts;
     private ShipAPI target;
     private Vector2f targetHome;
     private float respawnTimer = -1f;
@@ -48,7 +62,7 @@ final class WingScenario extends Scenario {
 
     @Override
     protected void spawnScene() {
-        targetHome = new Vector2f(host.getLocation().x + DUMMY_DISTANCE, host.getLocation().y);
+        targetHome = new Vector2f(host.getLocation().x + dummyDistance(), host.getLocation().y);
         spawnTarget();
         float hostRadius = host.getCollisionRadius();
         float targetRadius = target.getCollisionRadius();
@@ -58,10 +72,55 @@ final class WingScenario extends Scenario {
         frameHalfHeight = Math.max(1.2f * Math.max(hostRadius, targetRadius), targetRadius + RUN_MARGIN);
     }
 
+    /**
+     * How far out the dummy sits: {@link #DUMMY_DISTANCE}, or closer where the fighters would not reach it. Wings fly out
+     * to their engagement range, the carrier's own (Defensive Targeting Array cuts it to 0). At 0 they hold by the
+     * carrier, as support wings do, and only fire on what comes within their weapons' range.
+     */
+    private float dummyDistance() {
+        float hostRadius = host.getCollisionRadius();
+        float dummyRadius = dummy.getHullSpec().getCollisionRadius();
+        float engagement = host.getMutableStats().getFighterWingRange().computeEffective(wing.getRange());
+        escorts = engagement < 1f;
+        float closeIn = hostRadius + dummyRadius + WEAPON_RANGE_SHARE * longestWeaponRange(wing);
+        float distance = Math.max(ENGAGEMENT_SHARE * engagement, closeIn);
+        return MathUtils.clamp(distance, hostRadius + dummyRadius + MIN_GAP, DUMMY_DISTANCE);
+    }
+
+    /**
+     * Escorting fighters take up stations around the carrier, which puts some wings (Xyphos) behind it: out of range
+     * of the dummy, with the carrier in their line of fire. The game's own tag, which Sarissa and Mining Drone wings
+     * carry and Defensive Targeting Array gives other fighters, keeps them in front, between carrier and dummy. The
+     * escort maneuver reads it every frame, so fighters tagged as they launch take it up at once.
+     */
+    private void holdInFront() {
+        for (FighterLaunchBayAPI bay : host.getLaunchBaysCopy()) {
+            FighterWingAPI w = bay.getWing();
+            if (w == null || !wing.getId().equals(w.getWingId())) continue;
+            for (ShipAPI fighter : w.getWingMembers()) {
+                if (!fighter.hasTag(Tags.WING_STAY_IN_FRONT_OF_SHIP)) fighter.addTag(Tags.WING_STAY_IN_FRONT_OF_SHIP);
+            }
+        }
+    }
+
+    /** The fighter's longest weapon range, as fitted in the wing's variant (before any carrier or skill bonus). */
+    private static float longestWeaponRange(FighterWingSpecAPI wing) {
+        ShipVariantAPI variant = wing.getVariant();
+        float longest = 0f;
+        for (String slotId : variant.getFittedWeaponSlots()) {
+            WeaponSpecAPI weapon = variant.getWeaponSpec(slotId);
+            if (weapon != null) longest = Math.max(longest, weapon.getMaxRange());
+        }
+        return longest;
+    }
+
     @Override
     protected String describe() {
-        return String.format(Locale.ROOT, "wing %s (%d fighters, %s), dummy %s at x=%.0f with PD, shield %s",
-                wing.getId(), wing.getNumFighters(), wing.getRole(), dummy.getHullVariantId(), targetHome.x, shieldMode);
+        return String.format(Locale.ROOT,
+                "wing %s (%d fighters, %s, engagement %.0f, weapons %.0f), dummy %s at x=%.0f with PD, shield %s",
+                wing.getId(), wing.getNumFighters(), wing.getRole(),
+                host.getMutableStats().getFighterWingRange().computeEffective(wing.getRange()), longestWeaponRange(wing),
+                dummy.getHullVariantId(), targetHome.x, shieldMode);
     }
 
     @Override
@@ -89,6 +148,7 @@ final class WingScenario extends Scenario {
             host.setForceCarrierTarget(target);
             host.setForceCarrierTargetTime(1f);
         }
+        if (escorts) holdInFront();
 
         if (target != null && !target.isAlive()) {
             if (respawnTimer < 0f) {

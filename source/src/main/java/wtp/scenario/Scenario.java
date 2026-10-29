@@ -315,22 +315,4 @@ public abstract class Scenario {
         ship.getMutableStats().getArmorDamageTakenMult().modifyMult(MOD_ID, 0f);
         ship.getMutableStats().getEmpDamageTakenMult().modifyMult(MOD_ID, 0f);
     }
-
-    // ------------------------------------------------------------------ math
-
-    static float angleTo(Vector2f from, Vector2f to) {
-        return (float) Math.toDegrees(Math.atan2(to.y - from.y, to.x - from.x));
-    }
-
-    static float shortestAngle(float from, float to) {
-        float d = (to - from) % 360f;
-        if (d > 180f) d -= 360f;
-        if (d < -180f) d += 360f;
-        return d;
-    }
-
-    static Vector2f polar(Vector2f centre, float radius, float degrees) {
-        double a = Math.toRadians(degrees);
-        return new Vector2f(centre.x + radius * (float) Math.cos(a), centre.y + radius * (float) Math.sin(a));
-    }
 }

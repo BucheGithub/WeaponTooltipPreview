@@ -8,6 +8,9 @@ import com.fs.starfarer.api.combat.WeaponAPI.AIHints;
 import com.fs.starfarer.api.fleet.FleetMemberAPI;
 import com.fs.starfarer.api.fleet.FleetMemberType;
 import com.fs.starfarer.api.mission.FleetSide;
+import org.lazywizard.lazylib.MathUtils;
+import org.lazywizard.lazylib.VectorUtils;
+import org.lazywizard.lazylib.combat.CombatUtils;
 import org.lwjgl.util.vector.Vector2f;
 import wtp.Log;
 
@@ -104,23 +107,23 @@ final class ThreatWaves {
 
     /**
      * What a point defense weapon at {@code from} engages: the nearest enemy missile still on its way within
-     * {@code range}, else the nearest live fighter (fighters first for anti-fighter weapons); null if there is none.
+     * {@code range} (found through the engine's missile grid), else the nearest live fighter (fighters first for
+     * anti-fighter weapons); null if there is none. Called while the sandbox is swapped in.
      */
     CombatEntityAPI pick(Vector2f from, float range) {
-        float r2 = range * range;
         CombatEntityAPI missile = null, fighter = null;
-        float missileD2 = r2, fighterD2 = r2;
-        for (MissileAPI m : scene.engine.getMissiles()) {
+        float missileD2 = Float.MAX_VALUE, fighterD2 = Float.MAX_VALUE;
+        for (MissileAPI m : CombatUtils.getMissilesWithinRange(from, range)) {
             if (m.getOwner() != Scenario.ENEMY_OWNER || m.isFizzling() || m.didDamage()) continue;
-            float d2 = distanceSquared(from, m.getLocation());
+            float d2 = MathUtils.getDistanceSquared(from, m.getLocation());
             if (d2 < missileD2) {
                 missileD2 = d2;
                 missile = m;
             }
         }
         for (ShipAPI f : fighters) {
-            if (!f.isAlive()) continue;
-            float d2 = distanceSquared(from, f.getLocation());
+            if (!f.isAlive() || !MathUtils.isWithinRange(from, f.getLocation(), range)) continue;
+            float d2 = MathUtils.getDistanceSquared(from, f.getLocation());
             if (d2 < fighterD2) {
                 fighterD2 = d2;
                 fighter = f;
@@ -130,15 +133,10 @@ final class ThreatWaves {
         return missile != null ? missile : fighter;
     }
 
-    private static float distanceSquared(Vector2f a, Vector2f b) {
-        float dx = b.x - a.x, dy = b.y - a.y;
-        return dx * dx + dy * dy;
-    }
-
     /** A point on the dummy's side facing the host, {@code side} (-1..1) across the launch spread. */
     private Vector2f launchPoint(ShipAPI dummy, float side) {
-        float towardHost = Scenario.angleTo(dummy.getLocation(), scene.host.getLocation());
-        return Scenario.polar(dummy.getLocation(), dummy.getCollisionRadius() * 0.6f,
+        float towardHost = VectorUtils.getAngle(dummy.getLocation(), scene.host.getLocation());
+        return MathUtils.getPointOnCircumference(dummy.getLocation(), dummy.getCollisionRadius() * 0.6f,
                 towardHost + side * LAUNCH_SPREAD_DEGREES);
     }
 
@@ -153,9 +151,9 @@ final class ThreatWaves {
 
     private void launchWaveMissile(ShipAPI dummy) {
         ShipAPI host = scene.host;
-        float side = (float) (Math.random() * 2 - 1);
+        float side = MathUtils.getRandomNumberInRange(-1f, 1f);
         Vector2f at = launchPoint(dummy, side);
-        float facing = Scenario.angleTo(dummy.getLocation(), host.getLocation()) + side * 12f;
+        float facing = VectorUtils.getAngle(dummy.getLocation(), host.getLocation()) + side * 12f;
         if (scene.launchMissile(dummy, pendingMissileId, at, facing, host) != null) missilesLaunched++;
     }
 
@@ -172,7 +170,7 @@ final class ThreatWaves {
         fighterSide = -fighterSide;
         Vector2f passBy = new Vector2f(hostLoc.x + host.getCollisionRadius(), hostLoc.y + pass);
         Vector2f exit = new Vector2f(scene.frameMinX - 2000f, hostLoc.y + pass);
-        ShipAPI leader = spawnEnemyWing(wingId, at, Scenario.angleTo(at, passBy));
+        ShipAPI leader = spawnEnemyWing(wingId, at, VectorUtils.getAngle(at, passBy));
         if (leader == null) return;
         List<ShipAPI> members = leader.getWing() != null ? leader.getWing().getWingMembers()
                 : Collections.singletonList(leader);

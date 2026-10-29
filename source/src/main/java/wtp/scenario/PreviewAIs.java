@@ -6,6 +6,8 @@ import com.fs.starfarer.api.combat.ShipAIPlugin;
 import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.ShipCommand;
 import com.fs.starfarer.api.combat.ShipwideAIFlags;
+import org.lazywizard.lazylib.MathUtils;
+import org.lazywizard.lazylib.VectorUtils;
 import org.lwjgl.util.vector.Vector2f;
 
 /** Ship AIs for the preview's actors. Movement goes through real ship commands wherever it is visible. */
@@ -79,7 +81,7 @@ final class PreviewAIs {
                         || shieldMode == ShieldMode.FLUCTUATING && ((int) (time / shieldPhase)) % 2 == 0;
                 if (up && !shield.isOn() && !ship.getFluxTracker().isOverloadedOrVenting()) shield.toggleOn();
                 if (!up && shield.isOn()) shield.toggleOff();
-                shield.forceFacing(Scenario.angleTo(ship.getLocation(), threat.getLocation()));
+                shield.forceFacing(VectorUtils.getAngle(ship.getLocation(), threat.getLocation()));
             }
             ship.setAngularVelocity(0f);
             if (!drift) {
@@ -114,10 +116,10 @@ final class PreviewAIs {
         @Override
         public void advance(float amount) {
             Vector2f wp = waypoints[index];
-            if (index < waypoints.length - 1 && Vector2f.sub(wp, ship.getLocation(), new Vector2f()).length() < WAYPOINT_RADIUS) {
+            if (index < waypoints.length - 1 && MathUtils.isWithinRange(ship.getLocation(), wp, WAYPOINT_RADIUS)) {
                 wp = waypoints[++index];
             }
-            float diff = Scenario.shortestAngle(ship.getFacing(), Scenario.angleTo(ship.getLocation(), wp));
+            float diff = MathUtils.getShortestRotation(ship.getFacing(), VectorUtils.getAngle(ship.getLocation(), wp));
             // Turn toward the waypoint, letting angular momentum carry the last stretch so it does not wobble.
             float w = ship.getAngularVelocity();
             float turnAccel = Math.max(1f, ship.getMutableStats().getTurnAcceleration().getModifiedValue());
