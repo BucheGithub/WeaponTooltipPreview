@@ -43,14 +43,14 @@ final class RefitLookup {
 
         String[] how = {"not found"};
         WeaponSlotAPI slot = findSlot(display, widget, how);
-        Log.debug("refit context: %s/%s slot=%s (%s)", ((FleetMemberAPI) member).getShipName(),
+        Log.info("refit context: %s/%s slot=%s (%s)", ((FleetMemberAPI) member).getShipName(),
                 ((ShipVariantAPI) variant).getHullVariantId(), slot != null ? slot.getId() : "null", how[0]);
         return new RefitShip((FleetMemberAPI) member, (ShipVariantAPI) variant, slot);
     }
 
     /** The slot paired with the tooltip's widget: in one of the display's maps, or held by the widget itself. */
     private static WeaponSlotAPI findSlot(Object display, Object widget, String[] how) {
-        for (Refl.RField f : Refl.fields(display.getClass())) {
+        for (Refl.ReflectedField f : Refl.fields(display.getClass())) {
             if (f.isStatic || !Map.class.isAssignableFrom(f.type)) continue;
             Object value = f.get(display);
             if (!(value instanceof Map)) continue;
@@ -66,7 +66,7 @@ final class RefitLookup {
             }
         }
         if (widget != null) {
-            for (Refl.RField f : Refl.fields(widget.getClass())) {
+            for (Refl.ReflectedField f : Refl.fields(widget.getClass())) {
                 if (f.isStatic || f.type.isPrimitive()) continue;
                 Object value = f.get(widget);
                 if (value instanceof WeaponSlotAPI) {
@@ -76,7 +76,7 @@ final class RefitLookup {
                 // Buttons often carry their payload as a custom-data object; only game classes are inspected
                 // (JDK internals refuse reflective access on Java 9+).
                 if (value == null || !value.getClass().getName().startsWith("com.fs.")) continue;
-                Refl.RField nestedField = Refl.fieldOfType(value.getClass(), WeaponSlotAPI.class, false);
+                Refl.ReflectedField nestedField = Refl.fieldOfType(value.getClass(), WeaponSlotAPI.class, false);
                 Object nested = nestedField != null ? nestedField.get(value) : null;
                 if (nested instanceof WeaponSlotAPI) {
                     how[0] = "widget field " + f.name + "." + nestedField.name;

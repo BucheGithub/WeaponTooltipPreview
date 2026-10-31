@@ -2,6 +2,8 @@ package wtp.ui;
 
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CoreUITabId;
+import com.fs.starfarer.api.combat.ShipVariantAPI;
+import com.fs.starfarer.api.impl.codex.CodexDataV2;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
 import com.fs.starfarer.api.ui.Alignment;
@@ -41,8 +43,8 @@ final class TooltipWatcher {
 
     private static final class TipState {
         final int id;
-        /** The weapon or wing the tooltip is about; null for other tooltips. */
-        final PreviewSubject subject;
+        /** The weapon or wing the tooltip's current page is about; null for other tooltips. */
+        PreviewSubject subject;
         boolean visible;
         /**
          * Weak: the panel's parents lead back to the tooltip, the key this state is stored under, so a strong reference
@@ -51,6 +53,9 @@ final class TooltipWatcher {
         WeakReference<CustomPanelAPI> injected;
         float desiredBottom = Float.NaN;
         PreviewPanel preview;
+        /** The page index of a wing tooltip that no longer rebuilds itself (see turnPage); null for the others. */
+        Refl.ReflectedField pageField;
+        int page;
 
         TipState(int id, PreviewSubject subject) {
             this.id = id;
@@ -85,11 +90,18 @@ final class TooltipWatcher {
         for (int i = livePreviews.size() - 1; i >= 0; i--) {
             PreviewPanel p = livePreviews.get(i);
             if (!p.isDisposed() && p.isStale(now)) {
-                Log.debug("reaping stale preview");
+                Log.info("reaping stale preview");
                 p.dispose();
             }
             if (p.isDisposed()) livePreviews.remove(i);
         }
+    }
+
+    boolean isShowingPreview() {
+        for (PreviewPanel p : livePreviews) {
+            if (!p.isDisposed()) return true;
+        }
+        return false;
     }
 
     void disposeAll() {
@@ -127,24 +139,88 @@ final class TooltipWatcher {
         }
         if (s.subject == null || !visibleNow) return;
 
+        if (s.pageField != null) {
+            int page = (Integer) s.pageField.get(tip);
+            if (page != s.page) turnPage(tip, s, page);
+        }
+
         CustomPanelAPI panel = s.injected != null ? s.injected.get() : null;
         if (panel == null || !UiTree.isDescendant(tip, panel, 6)) {
-            if (s.injected != null) Log.debug("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
-            if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) return;
-            inject(tip, s);
+            if (s.injected != null) Log.info("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
+            if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
+                enforcePlacement(tip, s);
+                return;
+            }
+            inject(tip, s, null, topOf(tip));
         } else {
             enforcePlacement(tip, s);
         }
     }
 
-    /** Weapon tooltips hold the weapon's spec, fighter LPC tooltips the wing's. */
+    /**
+     * The "cycle weapon info" key only moves a wing tooltip's page index, for the next rebuild to show, and the preview
+     * stopped those (see {@link #stopRecreatingEveryFrame}). So the page is rebuilt once here, which clears the preview,
+     * and the preview goes back in: the running one while the page is still about the same wing, else a new one for the
+     * page's wing or weapon. The top edge stays where it was: the game nudges taller pages through align offsets, which
+     * mean nothing once placeOnScreen has re-anchored the tooltip.
+     */
+    private void turnPage(Object tip, TipState s, int page) {
+        CustomPanelAPI running = s.injected != null ? s.injected.get() : null;
+        PreviewSubject previous = s.subject;
+        float top = topOf(tip);
+        rebuildOnce(tip);
+        s.page = page;
+        s.subject = subjectOf(tip);
+        s.injected = null;
+        Log.info("tooltip #%d turned to page %d: %s", s.id, page, s.subject);
+        if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
+            disposePreview(s);
+            if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, top, hintOverhang(tip));
+            return;
+        }
+        boolean keepRunning = s.subject.equals(previous) && s.preview != null && !s.preview.isDisposed();
+        inject(tip, s, keepRunning ? running : null, top);
+    }
+
+    /** create() only resizes and places the tooltip for its new content with the flag on. */
+    private static void rebuildOnce(Object tip) {
+        Object expanded = Refl.fieldNamed(tip.getClass(), "expanded").get(tip);
+        Refl.call(tip, "setRecreateEveryFrame", true);
+        try {
+            Refl.call(tip, "create", expanded);
+        } finally {
+            Refl.call(tip, "setRecreateEveryFrame", false);
+        }
+    }
+
+    private static float topOf(Object tip) {
+        return tip instanceof UIComponentAPI ? UiTree.top((UIComponentAPI) tip) : 0f;
+    }
+
+    /**
+     * Weapon tooltips hold the weapon's spec, fighter LPC tooltips the wing's. A wing tooltip's later pages describe the
+     * weapons of its fighters.
+     */
     private static PreviewSubject subjectOf(Object tip) {
-        Refl.RField f = Refl.fieldOfType(tip.getClass(), WeaponSpecAPI.class, false);
+        Refl.ReflectedField f = Refl.fieldOfType(tip.getClass(), WeaponSpecAPI.class, false);
         Object spec = f != null ? f.get(tip) : null;
         if (spec instanceof WeaponSpecAPI) return PreviewSubject.weapon(((WeaponSpecAPI) spec).getWeaponId());
         f = Refl.fieldOfType(tip.getClass(), FighterWingSpecAPI.class, false);
         spec = f != null ? f.get(tip) : null;
-        if (spec instanceof FighterWingSpecAPI) return PreviewSubject.wing(((FighterWingSpecAPI) spec).getId());
+        if (!(spec instanceof FighterWingSpecAPI)) return null;
+        FighterWingSpecAPI wing = (FighterWingSpecAPI) spec;
+        String weaponId = weaponOnPage(tip, wing);
+        return weaponId != null ? PreviewSubject.fighterWeapon(weaponId, wing.getId()) : PreviewSubject.wing(wing.getId());
+    }
+
+    /** The tooltip points its Codex key at what the page describes; null on the wing's own pages. */
+    private static String weaponOnPage(Object tip, FighterWingSpecAPI wing) {
+        Object codexEntryId = Refl.call(tip, "getCodexEntryId");
+        ShipVariantAPI variant = wing.getVariant();
+        for (String slotId : variant.getFittedWeaponSlots()) {
+            String weaponId = variant.getWeaponId(slotId);
+            if (CodexDataV2.getWeaponEntryId(weaponId).equals(codexEntryId)) return weaponId;
+        }
         return null;
     }
 
@@ -162,16 +238,16 @@ final class TooltipWatcher {
         }
     }
 
-    private void inject(Object tip, TipState s) {
+    /** {@code running}: a preview panel to put back; null starts a new preview. */
+    private void inject(Object tip, TipState s, CustomPanelAPI running, float originalTop) {
         stopRecreatingEveryFrame(tip, s);
         Anchor a = findLabel(tip, null, OWN_LINE_PREFIX, 8);
         if (a == null) a = belowLongestLabel(tip);
         if (a == null) {
-            Log.debug("tooltip #%d: no anchor found, cannot inject", s.id);
+            Log.info("tooltip #%d: no anchor found, cannot inject", s.id);
             return;
         }
 
-        float originalTop = tip instanceof UIComponentAPI ? UiTree.top((UIComponentAPI) tip) : 0f;
         float hintBelow = hintOverhang(tip);
         UIPanelAPI parent = a.parent;
         PositionAPI pp = parent.getPosition();
@@ -189,6 +265,27 @@ final class TooltipWatcher {
 
         float x0 = a.node.getPosition().getX() - parentLeft;
         float width = Math.max(100f, pp.getWidth() - 2f * x0);
+        CustomPanelAPI panel = running != null ? running : newPreview(tip, s, width);
+        parent.addComponent(panel).inTL(x0, parentTop - anchorTop);
+        s.injected = new WeakReference<>(panel);
+
+        pp.setSize(pp.getWidth(), pp.getHeight() + shift);
+        if (parent != tip && tip instanceof UIComponentAPI) {
+            PositionAPI tp = ((UIComponentAPI) tip).getPosition();
+            tp.setSize(tp.getWidth(), tp.getHeight() + shift);
+        }
+        Refl.ReflectedField heightField = Refl.fieldNamed(tip.getClass(), "height");
+        if (heightField != null && heightField.type == float.class) {
+            heightField.set(tip, (Float) heightField.get(tip) + shift);
+        }
+
+        if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop, hintBelow);
+        Log.info("tooltip #%d: preview for %s injected via %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject, a.how,
+                tip instanceof UIComponentAPI ? ((UIComponentAPI) tip).getPosition().getHeight() : 0f, hintBelow,
+                Global.getSettings().getScreenHeight());
+    }
+
+    private CustomPanelAPI newPreview(Object tip, TipState s, float width) {
         // One live engine at a time: any other preview belongs to a tooltip that is gone or going.
         disposePreview(s);
         disposeAll();
@@ -203,23 +300,7 @@ final class TooltipWatcher {
         line.setAlignment(Alignment.MID);
         panel.addUIElement(status).inTL(0f, (PREVIEW_HEIGHT - STATUS_LINE_HEIGHT) / 2f);
         preview.setStatusLine(status);
-        parent.addComponent(panel).inTL(x0, parentTop - anchorTop);
-        s.injected = new WeakReference<>(panel);
-
-        pp.setSize(pp.getWidth(), pp.getHeight() + shift);
-        if (parent != tip && tip instanceof UIComponentAPI) {
-            PositionAPI tp = ((UIComponentAPI) tip).getPosition();
-            tp.setSize(tp.getWidth(), tp.getHeight() + shift);
-        }
-        Refl.RField heightField = Refl.fieldNamed(tip.getClass(), "height");
-        if (heightField != null && heightField.type == float.class) {
-            heightField.set(tip, (Float) heightField.get(tip) + shift);
-        }
-
-        if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop, hintBelow);
-        Log.debug("tooltip #%d: preview for %s injected via %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject, a.how,
-                tip instanceof UIComponentAPI ? ((UIComponentAPI) tip).getPosition().getHeight() : 0f, hintBelow,
-                Global.getSettings().getScreenHeight());
+        return panel;
     }
 
     /**
@@ -227,7 +308,7 @@ final class TooltipWatcher {
      * content, outside the height the frame reports, so it is measured here, before the preview moves anything.
      */
     private static float hintOverhang(Object tip) {
-        Refl.RField f = Refl.fieldNamed(tip.getClass(), "expandLabel");
+        Refl.ReflectedField f = Refl.fieldNamed(tip.getClass(), "expandLabel");
         Object label = f != null ? f.get(tip) : null;
         if (!(label instanceof UIComponentAPI) || !(tip instanceof UIComponentAPI) || !UiTree.children(tip).contains(label)) {
             return 0f;
@@ -239,14 +320,19 @@ final class TooltipWatcher {
     /**
      * Fighter LPC tooltips are built to recreate their content every frame (StandardTooltipV2Expandable's
      * recreateEveryFrame, set through its constructor), which clears the preview panel before it is ever drawn. The
-     * preview turns that off for the tooltip it goes into; while shown, the tooltip's "cycle weapon info" key no longer
-     * refreshes it.
+     * preview turns that off for the tooltip it goes into, and rebuilds it once whenever its "cycle weapon info" key
+     * turns the page, see {@link #turnPage}.
      */
     private static void stopRecreatingEveryFrame(Object tip, TipState s) {
         try {
             if (Boolean.TRUE.equals(Refl.call(tip, "isRecreateEveryFrame"))) {
                 Refl.call(tip, "setRecreateEveryFrame", false);
-                Log.debug("tooltip #%d recreates its content every frame; turned off for the preview", s.id);
+                Refl.ReflectedField pageField = Refl.fieldNamed(tip.getClass(), "index");
+                if (pageField != null && pageField.type == int.class) {
+                    s.pageField = pageField;
+                    s.page = (Integer) pageField.get(tip);
+                }
+                Log.info("tooltip #%d recreates its content every frame; turned off for the preview", s.id);
             }
         } catch (RuntimeException notExpandable) {
             // Not an expandable tooltip: nothing recreates it.

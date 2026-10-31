@@ -26,67 +26,67 @@ public final class ObfBridge {
     // ---------------------------------------------------------------- engine (required)
     public static Class<?> engineClass;
     /** The CombatEngine singleton's static instance field. */
-    public static Refl.RField engineInstance;
-    public static Refl.RMethod engineGetInstance;
-    public static Refl.RMethod engineDestroyInstance;
-    public static Refl.RMethod engineSetCombatUI;
-    public static Refl.RMethod engineSetCombatMap;
-    public static Refl.RMethod engineCreateDummyFleets;
-    public static Refl.RMethod engineInit;
-    public static Refl.RMethod engineSetPaused;
-    public static Refl.RMethod enginePreCombat;
-    public static Refl.RMethod engineAdvance;
-    public static Refl.RMethod engineRender;
+    public static Refl.ReflectedField engineInstance;
+    public static Refl.ReflectedMethod engineGetInstance;
+    public static Refl.ReflectedMethod engineDestroyInstance;
+    public static Refl.ReflectedMethod engineSetCombatUI;
+    public static Refl.ReflectedMethod engineSetCombatMap;
+    public static Refl.ReflectedMethod engineCreateDummyFleets;
+    public static Refl.ReflectedMethod engineInit;
+    public static Refl.ReflectedMethod engineSetPaused;
+    public static Refl.ReflectedMethod enginePreCombat;
+    public static Refl.ReflectedMethod engineAdvance;
+    public static Refl.ReflectedMethod engineRender;
     /** Combat map; {@link #mapSetBounds} is its (minX, maxX, minY, maxY) setter. */
     public static Class<?> mapClass;
-    public static Refl.RMethod mapSetBounds;
+    public static Refl.ReflectedMethod mapSetBounds;
     /** The (empty) input event list engine.advance() takes. */
     public static Class<?> inputClass;
     public static Class<?> animClass;
-    public static Refl.RField animManagers;
-    public static Refl.RMethod animAdvanceAll;
-    public static Refl.RMethod viewportSetXRatio;
-    public static Refl.RMethod viewportSetYRatio;
+    public static Refl.ReflectedField animManagers;
+    public static Refl.ReflectedMethod animAdvanceAll;
+    public static Refl.ReflectedMethod viewportSetXRatio;
+    public static Refl.ReflectedMethod viewportSetYRatio;
     /** Interface the engine's combat UI host implements (TitleScreenState is the headless one). */
     public static Class<?> combatUiInterface;
     public static Class<?> appDriverClass;
-    public static Refl.RMethod appDriverGetInstance;
-    public static Refl.RMethod appDriverCurrentState;
-    public static Refl.RField appDriverStates;
+    public static Refl.ReflectedMethod appDriverGetInstance;
+    public static Refl.ReflectedMethod appDriverCurrentState;
+    public static Refl.ReflectedMethod appDriverGetSession;
+    public static Refl.ReflectedField appDriverStates;
 
     // ---------------------------------------------------------------- UI (required)
     public static Class<?> tooltipClass;
-    public static Refl.RMethod campaignScreenPanel;
-    public static Refl.RMethod uiParent;
+    public static Refl.ReflectedMethod campaignScreenPanel;
 
     // ---------------------------------------------------------------- optional
     /** The in-combat weapon arc renderer; null → a plain arc is drawn. */
     public static Class<?> arcRendererClass;
-    public static Refl.RMethod arcSelectGroup;
-    public static Refl.RMethod arcAdvance;
-    public static Refl.RMethod arcRender;
+    public static Refl.ReflectedMethod arcSelectGroup;
+    public static Refl.ReflectedMethod arcAdvance;
+    public static Refl.ReflectedMethod arcRender;
     /** Refit panel and the tooltip → widget link; null → refit tooltips use a generic host. */
     public static Class<?> refitPanelClass;
-    public static Refl.RMethod tooltipWidget;
-    public static Refl.RMethod refitMember;
-    public static Refl.RMethod refitShipDisplay;
+    public static Refl.ReflectedMethod tooltipWidget;
+    public static Refl.ReflectedMethod refitMember;
+    public static Refl.ReflectedMethod refitShipDisplay;
     /** CampaignState.showingCodex; null → the Codex cannot be detected (its tooltips are never scanned anyway). */
-    public static Refl.RField campaignShowingCodex;
+    public static Refl.ReflectedField campaignShowingCodex;
     /**
      * The game's sound effects volume (sound.ooOO on macOS, sound.C on Windows: getInstance, two volume channels with
      * getter/setter). Only the
      * options and title screens set it. Null → the preview cannot be made quieter, so it is muted below 100%.
      */
-    public static Refl.RMethod soundInstance;
-    public static Refl.RMethod soundVolumeGet;
-    public static Refl.RMethod soundVolumeSet;
-    public static Refl.RMethod soundVolume2Get;
-    public static Refl.RMethod soundVolume2Set;
+    public static Refl.ReflectedMethod soundInstance;
+    public static Refl.ReflectedMethod soundVolumeGet;
+    public static Refl.ReflectedMethod soundVolumeSet;
+    public static Refl.ReflectedMethod soundVolume2Get;
+    public static Refl.ReflectedMethod soundVolume2Set;
     /**
      * CampaignFleetMemberView.renderWeapons(member, x, y, angle, scale, alpha, flag): a fleet member's weapon sprites
      * over its hull, as fleet and fighter icons draw them. Null → fighter icons in the wing widget show bare hulls.
      */
-    public static Refl.RMethod renderMemberWeapons;
+    public static Refl.ReflectedMethod renderMemberWeapons;
 
     private static boolean ready;
 
@@ -112,11 +112,10 @@ public final class ObfBridge {
         tooltipClass = (Class<?>) need(missing, "tooltip base", () -> Refl.classForName(TOOLTIP_BASE_CLASS));
         Class<?> viewport = (Class<?>) need(missing, "CombatViewport", () -> Refl.classForName("com.fs.starfarer.combat.CombatViewport"));
         Class<?> campaignState = (Class<?>) need(missing, "CampaignState", () -> Refl.classForName("com.fs.starfarer.campaign.CampaignState"));
-        need(missing, "weapon tooltip", () -> Refl.classForName("com.fs.starfarer.ui.impl.CargoTooltipFactory$4"));
 
         if (engineClass != null) {
             Class<?> e = engineClass;
-            engineInstance = (Refl.RField) need(missing, "CombatEngine instance field", () -> Refl.fieldOfType(e, e, true));
+            engineInstance = (Refl.ReflectedField) need(missing, "CombatEngine instance field", () -> Refl.fieldOfType(e, e, true));
             engineGetInstance = method(missing, e, "getInstance");
             engineDestroyInstance = method(missing, e, "destroyInstance");
             engineCreateDummyFleets = method(missing, e, "createDummyFleetsIfNeeded");
@@ -128,16 +127,16 @@ public final class ObfBridge {
             engineSetCombatUI = method(missing, e, "setCombatUI", ANY);
             engineSetCombatMap = method(missing, e, "setCombatMap", ANY);
             engineAdvance = method(missing, e, "advance", float.class, ANY);
-            if (engineSetCombatUI != null) combatUiInterface = engineSetCombatUI.params[0];
-            if (engineSetCombatMap != null) mapClass = engineSetCombatMap.params[0];
-            if (engineAdvance != null) inputClass = engineAdvance.params[1];
+            if (engineSetCombatUI != null) combatUiInterface = engineSetCombatUI.parameterTypes[0];
+            if (engineSetCombatMap != null) mapClass = engineSetCombatMap.parameterTypes[0];
+            if (engineAdvance != null) inputClass = engineAdvance.parameterTypes[1];
         }
         if (mapClass != null) {
             mapSetBounds = method(missing, mapClass, "super", float.class, float.class, float.class, float.class);
         }
         if (animClass != null) {
             Class<?> a = animClass;
-            animManagers = (Refl.RField) need(missing, "AnimationManager.managers", () -> Refl.fieldNamed(a, "managers"));
+            animManagers = (Refl.ReflectedField) need(missing, "AnimationManager.managers", () -> Refl.fieldNamed(a, "managers"));
             animAdvanceAll = method(missing, a, "advanceAll", float.class);
         }
         if (viewport != null) {
@@ -148,15 +147,15 @@ public final class ObfBridge {
             Class<?> d = appDriverClass;
             appDriverGetInstance = method(missing, d, "getInstance");
             appDriverCurrentState = method(missing, d, "getCurrentState");
-            appDriverStates = (Refl.RField) need(missing, "AppDriver.states", () -> Refl.fieldNamed(d, "states"));
+            appDriverGetSession = method(missing, d, "getSession");
+            appDriverStates = (Refl.ReflectedField) need(missing, "AppDriver.states", () -> Refl.fieldNamed(d, "states"));
         }
         if (campaignState != null) {
             campaignScreenPanel = method(missing, campaignState, "getScreenPanel");
-            campaignShowingCodex = (Refl.RField) need(degraded, "CampaignState.showingCodex",
+            campaignShowingCodex = (Refl.ReflectedField) need(degraded, "CampaignState.showingCodex",
                     () -> Refl.fieldNamed(campaignState, "showingCodex"));
         }
         if (tooltipClass != null) {
-            uiParent = method(missing, tooltipClass, "getParent");
             method(missing, tooltipClass, "getChildrenNonCopy");
             method(missing, tooltipClass, "getChildrenCopy");
             tooltipWidget = method(degraded, tooltipClass, "getWidgetAttachedTo");
@@ -202,9 +201,9 @@ public final class ObfBridge {
         }
 
         ready = missing.isEmpty();
-        if (!degraded.isEmpty()) Log.info("bridge: optional entries missing (feature degraded): %s", degraded);
+        if (!degraded.isEmpty()) Log.error("bridge: optional entries missing (feature degraded): " + degraded);
         if (ready) Log.info("bridge: all required entries resolved");
-        else Log.info("bridge: required entries missing, preview DISABLED: %s", missing);
+        else Log.error("bridge: required entries missing, preview DISABLED: " + missing);
         return ready;
     }
 
@@ -219,17 +218,17 @@ public final class ObfBridge {
         }
     }
 
-    private static Refl.RMethod method(List<String> missing, Class<?> cls, String name, Class<?>... params) {
+    private static Refl.ReflectedMethod method(List<String> missing, Class<?> cls, String name, Class<?>... params) {
         String simple = cls.getName().substring(cls.getName().lastIndexOf('.') + 1);
-        return (Refl.RMethod) need(missing, simple + "." + name, () -> Refl.method(cls, name, params));
+        return (Refl.ReflectedMethod) need(missing, simple + "." + name, () -> Refl.method(cls, name, params));
     }
 
     /** The first of {@code names} (one per build) that names a method with these parameters. */
-    private static Refl.RMethod method(List<String> missing, Class<?> cls, String[] names, Class<?>... params) {
+    private static Refl.ReflectedMethod method(List<String> missing, Class<?> cls, String[] names, Class<?>... params) {
         String simple = cls.getName().substring(cls.getName().lastIndexOf('.') + 1);
-        return (Refl.RMethod) need(missing, simple + "." + String.join("|", names), () -> {
+        return (Refl.ReflectedMethod) need(missing, simple + "." + String.join("|", names), () -> {
             for (String name : names) {
-                Refl.RMethod m = Refl.method(cls, name, params);
+                Refl.ReflectedMethod m = Refl.method(cls, name, params);
                 if (m != null) return m;
             }
             return null;
@@ -239,7 +238,7 @@ public final class ObfBridge {
     /** The declared type of an unobfuscated field holding an obfuscated class. */
     private static Class<?> fieldType(List<String> missing, String what, Class<?> cls, String field) {
         return (Class<?>) need(missing, what, () -> {
-            Refl.RField f = Refl.fieldNamed(cls, field);
+            Refl.ReflectedField f = Refl.fieldNamed(cls, field);
             return f != null ? f.type : null;
         });
     }
@@ -257,9 +256,9 @@ public final class ObfBridge {
     }
 
     /** Name, parameters and return type: obfuscated names are reused across overloads. */
-    private static Refl.RMethod typed(List<String> missing, Class<?> cls, Class<?> returnType, String name,
+    private static Refl.ReflectedMethod typed(List<String> missing, Class<?> cls, Class<?> returnType, String name,
                                       Class<?>... params) {
         String simple = cls.getName().substring(cls.getName().lastIndexOf('.') + 1);
-        return (Refl.RMethod) need(missing, simple + "." + name, () -> Refl.method(cls, returnType, name, params));
+        return (Refl.ReflectedMethod) need(missing, simple + "." + name, () -> Refl.method(cls, returnType, name, params));
     }
 }

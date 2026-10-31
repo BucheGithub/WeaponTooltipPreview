@@ -8,12 +8,12 @@ import java.util.Locale;
 
 /**
  * The player's choices from the LunaLib settings menu (data/config/LunaSettings.csv), cached and refreshed whenever
- * LunaLib reports a change. Scene settings apply from the next hover; the sound level applies at once.
+ * LunaLib reports a change. Scene settings apply from the next hover; the sound level and logs apply at once.
  */
 public final class WtpSettings {
 
     private static final String MOD_ID = "weapon_tooltip_preview";
-    private static final String DEFAULT_DUMMY_VARIANT = "hammerhead_Balanced";
+    public static final String DEFAULT_DUMMY_VARIANT = "hammerhead_Balanced";
     /** Radio option (as written in the CSV) → stock variant used as the dummy. */
     private static final String[][] DUMMIES = {
             {"Lasher", "lasher_Standard"},
@@ -28,7 +28,7 @@ public final class WtpSettings {
             {"Paragon", "paragon_Elite"},
     };
 
-    private static float soundLevel = 0.3f;
+    private static float soundLevel = 0.7f;
     private static String dummyVariant = DEFAULT_DUMMY_VARIANT;
     private static ShieldMode shieldMode = ShieldMode.FLUCTUATING;
     private static boolean listening;
@@ -36,7 +36,6 @@ public final class WtpSettings {
     private WtpSettings() {
     }
 
-    /** Preview volume as a fraction of the game's sound effects volume; 0 means muted. */
     public static float soundLevel() {
         return soundLevel;
     }
@@ -49,20 +48,17 @@ public final class WtpSettings {
         return shieldMode;
     }
 
-    /** Reads the current values and subscribes to changes (once). Defaults stay if LunaLib is unavailable. */
     public static void load() {
-        try {
-            if (!listening) {
-                LunaSettings.addSettingsListener(new Listener());
-                listening = true;
-            }
-            read();
-        } catch (Throwable t) {
-            Log.error("LunaLib settings unavailable; using defaults", t);
+        if (!listening) {
+            LunaSettings.addSettingsListener(new Listener());
+            listening = true;
         }
+        read();
     }
 
     private static void read() {
+        Log.setEnabled(Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "wtp_enableLogs")));
+
         Integer sound = LunaSettings.getInt(MOD_ID, "wtp_soundLevel");
         if (sound != null) soundLevel = Math.max(0, Math.min(100, sound)) / 100f;
 
