@@ -204,14 +204,15 @@ public abstract class Scenario {
 
     /**
      * Weapon and missile AIs only engage what their side can see. Nothing in the sandbox lifts combat fog of war,
-     * so both sides get the whole scene revealed every frame.
+     * so both sides get the whole scene revealed every frame. The fog keeps its reveal keys for the engine's whole life
+     * here, so the key is a constant: each scene takes over the one entry instead of leaving a scenario pinned.
      */
     private void revealScene() {
         float cx = (frameMinX + frameMaxX) / 2f;
         float radius = (frameMaxX - frameMinX) + frameHalfHeight * 2f;
         for (int owner = 0; owner <= 1; owner++) {
             FogOfWarAPI fog = engine.getFogOfWar(owner);
-            if (fog != null) fog.revealAroundPoint(this, cx, frameCenterY, radius);
+            if (fog != null) fog.revealAroundPoint(MOD_ID, cx, frameCenterY, radius);
         }
     }
 

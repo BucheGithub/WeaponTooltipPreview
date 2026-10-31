@@ -19,6 +19,7 @@ import wtp.scenario.PreviewSubject;
 import wtp.scenario.RefitShip;
 import wtp.sim.SandboxHost;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -43,7 +44,11 @@ final class TooltipWatcher {
         /** The weapon or wing the tooltip is about; null for other tooltips. */
         final PreviewSubject subject;
         boolean visible;
-        CustomPanelAPI injected;
+        /**
+         * Weak: the panel's parents lead back to the tooltip, the key this state is stored under, so a strong reference
+         * would keep the tooltip and the whole UI around it alive for good. The tooltip itself holds the panel.
+         */
+        WeakReference<CustomPanelAPI> injected;
         float desiredBottom = Float.NaN;
         PreviewPanel preview;
 
@@ -122,7 +127,8 @@ final class TooltipWatcher {
         }
         if (s.subject == null || !visibleNow) return;
 
-        if (s.injected == null || !UiTree.isDescendant(tip, s.injected, 6)) {
+        CustomPanelAPI panel = s.injected != null ? s.injected.get() : null;
+        if (panel == null || !UiTree.isDescendant(tip, panel, 6)) {
             if (s.injected != null) Log.debug("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
             if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) return;
             inject(tip, s);
@@ -166,6 +172,7 @@ final class TooltipWatcher {
         }
 
         float originalTop = tip instanceof UIComponentAPI ? UiTree.top((UIComponentAPI) tip) : 0f;
+        float hintBelow = hintOverhang(tip);
         UIPanelAPI parent = a.parent;
         PositionAPI pp = parent.getPosition();
         float parentLeft = pp.getX();
@@ -197,7 +204,7 @@ final class TooltipWatcher {
         panel.addUIElement(status).inTL(0f, (PREVIEW_HEIGHT - STATUS_LINE_HEIGHT) / 2f);
         preview.setStatusLine(status);
         parent.addComponent(panel).inTL(x0, parentTop - anchorTop);
-        s.injected = panel;
+        s.injected = new WeakReference<>(panel);
 
         pp.setSize(pp.getWidth(), pp.getHeight() + shift);
         if (parent != tip && tip instanceof UIComponentAPI) {
@@ -209,8 +216,24 @@ final class TooltipWatcher {
             heightField.set(tip, (Float) heightField.get(tip) + shift);
         }
 
-        if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop);
-        Log.debug("tooltip #%d: preview for %s injected via %s", s.id, s.subject, a.how);
+        if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop, hintBelow);
+        Log.debug("tooltip #%d: preview for %s injected via %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject, a.how,
+                tip instanceof UIComponentAPI ? ((UIComponentAPI) tip).getPosition().getHeight() : 0f, hintBelow,
+                Global.getSettings().getScreenHeight());
+    }
+
+    /**
+     * How far the "F2 open Codex" line hangs below the tooltip's frame; 0 without one. The game places it under the
+     * content, outside the height the frame reports, so it is measured here, before the preview moves anything.
+     */
+    private static float hintOverhang(Object tip) {
+        Refl.RField f = Refl.fieldNamed(tip.getClass(), "expandLabel");
+        Object label = f != null ? f.get(tip) : null;
+        if (!(label instanceof UIComponentAPI) || !(tip instanceof UIComponentAPI) || !UiTree.children(tip).contains(label)) {
+            return 0f;
+        }
+        PositionAPI lp = ((UIComponentAPI) label).getPosition();
+        return Math.max(((UIComponentAPI) tip).getPosition().getY() - lp.getY(), lp.getHeight());
     }
 
     /**
@@ -232,13 +255,14 @@ final class TooltipWatcher {
 
     /**
      * Keep the top edge where the game placed it and grow downward, like a native tooltip; push up only as far as
-     * needed to stay on screen (top-align if taller than the screen). setYAlignOffset is not usable here: it
-     * re-anchors the tooltip to the parent's corner instead of nudging it.
+     * needed to stay on screen with {@code below} free under the frame (top-align if taller than the screen, where
+     * the bottom runs off it). setYAlignOffset is not usable here: it re-anchors the tooltip to the parent's corner
+     * instead of nudging it.
      */
-    private static void placeOnScreen(UIComponentAPI tip, TipState s, float originalTop) {
+    private static void placeOnScreen(UIComponentAPI tip, TipState s, float originalTop, float below) {
         float height = tip.getPosition().getHeight();
         float screenH = Global.getSettings().getScreenHeight();
-        float bottom = Math.max(originalTop - height, SCREEN_MARGIN);
+        float bottom = Math.max(originalTop - height, SCREEN_MARGIN + below);
         if (bottom + height > screenH - SCREEN_MARGIN) bottom = screenH - SCREEN_MARGIN - height;
         s.desiredBottom = bottom;
         applyBottom(tip, bottom);
