@@ -1,0 +1,6 @@
+{
+    "weapon_tooltip_preview": {
+        # LunaLib's settings menu draws this at 40x40. A path of its own: "icon.png" at the root is shared by many mods.
+        "iconPath": "graphics/weapontooltippreview/luna_icon.png",
+    }
+}
