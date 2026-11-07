@@ -13,9 +13,12 @@ val modsDir = starsectorDir.resolve("mods")
 val modOutputDir = rootDir.resolve("../$modFolderName")
 
 dependencies {
-    // Game API and runtime libraries. starfarer_obf.jar is deliberately absent: obfuscated code is reached by reflection only.
+    // Game API, game core and runtime libraries. Each platform's core is obfuscated separately, so code may only name
+    // the core's unobfuscated classes and members; everything else goes through the bridge.
     compileOnly(files(
         gameJars.resolve("starfarer.api.jar"),
+        gameJars.resolve("starfarer_obf.jar"),
+        gameJars.resolve("fs.common_obf.jar"),
         gameJars.resolve("lwjgl.jar"),
         gameJars.resolve("lwjgl_util.jar"),
         gameJars.resolve("log4j-1.2.9.jar"),
@@ -25,6 +28,7 @@ dependencies {
         include("LazyLib*/jars/LazyLib.jar")
         include("LazyLib*/jars/internal/Kotlin-Runtime.jar") // LunaLib is Kotlin; LazyLib provides the runtime
         include("LunaLib*/jars/LunaLib.jar")
+        include("GraphicsLib*/jars/Graphics.jar") // optional: only called while it is enabled
     })
 }
 
