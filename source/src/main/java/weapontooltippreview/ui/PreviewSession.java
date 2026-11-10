@@ -3,6 +3,7 @@ package weapontooltippreview.ui;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.combat.DamagingProjectileAPI;
 import com.fs.starfarer.api.combat.ShipAPI;
+import com.fs.starfarer.api.combat.WeaponAPI;
 import com.fs.starfarer.api.util.Misc;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
@@ -13,6 +14,7 @@ import weapontooltippreview.scenario.NoPreviewException;
 import weapontooltippreview.scenario.PreviewSubject;
 import weapontooltippreview.scenario.RefitShip;
 import weapontooltippreview.scenario.Scenario;
+import weapontooltippreview.scenario.WeaponHost;
 import weapontooltippreview.sim.CombatArcRenderer;
 import weapontooltippreview.sim.EngineSandbox;
 import weapontooltippreview.sim.PreviewSound;
@@ -83,8 +85,7 @@ final class PreviewSession {
         boolean expected = false;
         sandbox.swapIn();
         try {
-            session.scenario = Scenario.create(sandbox.api(), subject, refit, sandbox.beginScene());
-            session.scenario.spawn();
+            session.scenario = Scenario.spawn(sandbox.api(), subject, refit, sandbox.beginScene());
             session.rearmArcRenderer();
             ok = true;
         } catch (NoPreviewException e) {
@@ -109,11 +110,12 @@ final class PreviewSession {
      * Swapped in only.
      */
     private void rearmArcRenderer() {
-        arcTarget = scenario.target();
-        if (arcUnavailable || scenario.weapon == null) return;
+        arcTarget = scenario.targetDummy().ship();
+        WeaponHost weaponHost = scenario.weaponHost();
+        if (arcUnavailable || weaponHost.weapon() == null) return;
         try {
             CombatArcRenderer arc = new CombatArcRenderer();
-            arc.select(scenario.weaponHost.getWeaponGroupFor(scenario.weapon));
+            arc.select(weaponHost.ship().getWeaponGroupFor(weaponHost.weapon()));
             arcRenderer = arc;
         } catch (Throwable t) {
             Log.error("combat arc renderer failed; previews draw no arc", t);
@@ -135,7 +137,7 @@ final class PreviewSession {
             float step = Math.min(dt, MAX_STEP);
             scenario.beforeStep(step);
             sandbox.advance(step);
-            if (scenario.target() != arcTarget) rearmArcRenderer();
+            if (scenario.targetDummy().ship() != arcTarget) rearmArcRenderer();
             if (arcRenderer != null) arcRenderer.advance(step);
             simMs += (System.nanoTime() - t0) / 1e6;
         } finally {
@@ -172,7 +174,7 @@ final class PreviewSession {
         long t0 = System.nanoTime();
         sandbox.swapIn();
         try {
-            sandbox.render(panes, paneCount, BACKGROUND, scenario.weapon != null ? this::drawArc : null);
+            sandbox.render(panes, paneCount, BACKGROUND, scenario.weaponHost().weapon() != null ? this::drawArc : null);
             if (split) collectStripMarkers();
         } finally {
             sandbox.swapOut();
@@ -194,14 +196,15 @@ final class PreviewSession {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             Pane weaponHostPane = panes[0];
-            if (scenario.weapon != null) {
-                hud.drawWeapon(scenario.weapon, weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+            WeaponHost weaponHost = scenario.weaponHost();
+            if (weaponHost.weapon() != null) {
+                hud.drawWeapon(weaponHost.weapon(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
                         weaponHostPane.uiH, alpha);
             } else {
-                hud.drawWings(scenario.weaponHost, weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+                hud.drawWings(weaponHost.ship(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
                         weaponHostPane.uiH, alpha);
             }
-            ShipAPI target = scenario.target();
+            ShipAPI target = scenario.targetDummy().ship();
             if (target.isAlive()) {
                 Pane p = panes[paneCount - 1];
                 hud.drawTarget(target, p.uiX, p.uiY, p.uiW, p.uiH, alpha);
@@ -244,7 +247,7 @@ final class PreviewSession {
             left.worldWidth = paneWorldW;
             left.worldHeight = paneWorldH;
             left.worldX = s.frameMinX;
-            left.worldY = s.weaponHost.getLocation().y - paneWorldH / 2f;
+            left.worldY = s.weaponHost().ship().getLocation().y - paneWorldH / 2f;
             placeInPixels(left);
 
             Pane right = panes[1];
@@ -287,12 +290,13 @@ final class PreviewSession {
 
     /** World x of the weapon host, target, range end and every shot of ours in flight, for the full-scale strip. */
     private void collectStripMarkers() {
-        weaponHostX = scenario.weaponHost.getLocation().x;
-        targetX = scenario.target().getLocation().x;
-        rangeEndX = scenario.weapon.getLocation().x + scenario.weapon.getRange();
+        WeaponAPI weapon = scenario.weaponHost().weapon();
+        weaponHostX = scenario.weaponHost().ship().getLocation().x;
+        targetX = scenario.targetDummy().ship().getLocation().x;
+        rangeEndX = weapon.getLocation().x + weapon.getRange();
         blipCount = 0;
         for (DamagingProjectileAPI p : sandbox.api().getProjectiles()) {
-            if (p.getWeapon() != scenario.weapon || blipCount == MAX_BLIPS) continue;
+            if (p.getWeapon() != weapon || blipCount == MAX_BLIPS) continue;
             blips[blipCount++] = p.getLocation().x;
         }
     }

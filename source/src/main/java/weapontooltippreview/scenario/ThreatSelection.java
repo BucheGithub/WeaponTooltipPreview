@@ -9,9 +9,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * What the dummy launches at a point defense weapon, picked by the player with three keys while such a preview shows:
- * missiles, wings or both, which missile and which wing. Kept for the game session, across tooltips. The dummy carries
- * the launchers and wings for real (see {@link TargetDummy}) and starts over whenever what it carries changes.
+ * What the dummy launches at a point defense weapon.
+ * Players can switch with F5, F6, F7.
+ * Weapons and wings are added to the dummy, so cycling requires a new setup.
  */
 public final class ThreatSelection {
 
@@ -31,10 +31,7 @@ public final class ThreatSelection {
         }
     }
 
-    /**
-     * Label, then the launcher ids from small to medium (the Swarmer only comes small). The labels are short: the
-     * game's own names ("Annihilator Rocket Launcher") are too long for the hint line.
-     */
+    /**Label, then the launcher ids from small to medium. */
     private static final String[][] MISSILES = {
             {"Harpoon", "harpoon", "harpoonpod"},
             {"Swarmer", "swarmer"},
@@ -47,7 +44,7 @@ public final class ThreatSelection {
     private static Mode mode = Mode.MISSILES_ONLY;
     private static int missileIndex;
     private static int wingIndex;
-    /** Goes up with every change, so the hint lines know to redraw. */
+    /** Goes up with every change, so the CTA redraws the next label. */
     private static int version;
 
     private ThreatSelection() {
@@ -90,18 +87,18 @@ public final class ThreatSelection {
         return MISSILES[missileIndex][0];
     }
 
-    /** The fighter's name ("Broadsword"), shorter than the wing's ("Broadsword Wing"). */
+    /** The fighter's name */
     public static String wingLabel() {
         return Global.getSettings().getFighterWingSpec(WINGS[wingIndex]).getVariant().getHullSpec().getHullName();
     }
 
-    /** The picked missile's launcher ids from small to medium; null in Wings Only. */
+    /** The missiles the dummy carries, sending the list so the dummy handles the small/med pick */
     static List<String> missileLaunchers() {
         String[] missile = MISSILES[missileIndex];
         return mode.missiles ? Arrays.asList(missile).subList(1, missile.length) : null;
     }
 
-    /** The wing the dummy carries in every bay; null in Missiles Only. */
+    /** The wing the dummy carries */
     static String wingId() {
         return mode.wings ? WINGS[wingIndex] : null;
     }

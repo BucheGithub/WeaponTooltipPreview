@@ -5,7 +5,7 @@ import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
 
 /**
- * The game's own weapon-arc renderer (the white dashed "ladder" lines shown in combat for the selected weapon group,
+ * The game's OG weapon-arc renderer (the white dashed "ladder" lines shown in combat for the selected weapon group,
  * textured with graphics/hud/line4x4.png). Driven the way CombatState drives it: select a group, advance its fade,
  * render in world coordinates. Every call must happen while the sandbox engine is swapped in.
  */

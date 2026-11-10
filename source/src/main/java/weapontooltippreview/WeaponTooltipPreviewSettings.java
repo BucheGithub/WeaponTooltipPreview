@@ -3,7 +3,6 @@ package weapontooltippreview;
 import lunalib.lunaSettings.LunaSettings;
 import lunalib.lunaSettings.LunaSettingsListener;
 import org.lwjgl.input.Keyboard;
-import weapontooltippreview.scenario.ShieldMode;
 
 import java.util.Locale;
 
@@ -12,6 +11,13 @@ import java.util.Locale;
  * LunaLib reports a change. Scene settings apply from the next hover; the sound level, keys and logs apply at once.
  */
 public final class WeaponTooltipPreviewSettings {
+
+    /** How the dummy uses its shield. */
+    public enum ShieldMode {
+        ALWAYS_ON,
+        ALWAYS_OFF,
+        FLUCTUATING
+    }
 
     private static final String MOD_ID = "weapon_tooltip_preview";
     private static final String DEFAULT_DUMMY_VARIANT_ID = "drover_Strike";

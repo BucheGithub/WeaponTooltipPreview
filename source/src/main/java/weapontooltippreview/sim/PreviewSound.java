@@ -4,10 +4,8 @@ import weapontooltippreview.Log;
 import weapontooltippreview.bridge.StarfarerBridge;
 
 /**
- * Preview volume. The game applies its sound effects volume to every sound when it starts and on every per-frame
- * loop update, so scaling it only during the sandbox step would let beam and engine loops jump back to full volume.
- * Instead the volume is lowered for as long as a preview is showing, and restored a moment after it ends, once its
- * last sounds have faded. Only the game's options and title screens ever set this volume, so nothing competes.
+ * Preview volume. The game applies its sound effects volume to every sound when it starts and on every per-frame loop update.
+ * The volume is lowered for as long as a preview is showing, and restored a moment after it ends.
  */
 public final class PreviewSound {
 
@@ -27,7 +25,7 @@ public final class PreviewSound {
         return StarfarerBridge.soundInstance != null;
     }
 
-    /** Keeps the game's sound effects at {@code level} (0..1) of the player's setting while a preview runs. */
+    /** Keeps the game's sound effects at 0.7 (default) of the player's setting while a preview runs. */
     public static void hold(float level) {
         if (!isAvailable()) return;
         try {

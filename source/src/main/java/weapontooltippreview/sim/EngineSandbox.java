@@ -35,14 +35,16 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * A private CombatEngine living next to the campaign's idle one. The engine is a JVM-wide singleton, so every
- * interaction happens between swapIn and swapOut, which exchange the static instance.
- * One sandbox serves many previews: clear the previous scene and hand out a different origin,
- * so particles and explosions still fading out from the last preview are off camera.
+ * A private CombatEngine living next to the campaign's idle one. 
+ * The engine is a JVM-wide singleton, so every interaction happens between swapIn and swapOut, which exchange the static instance.
+ * One sandbox serves many previews.
+ * Clear the previous scene and pick a different origin so particles and explosions still fading out are off camera.
  */
 public final class EngineSandbox {
 
-    private static final String[] ANIM_GROUPS = {"CEanim", "CENonPauseanim"};
+    /** The engine's animation groups, in the order the combat state advances them; advance() stands in for it. */
+    private static final String[] ANIMATION_GROUPS = {CombatEngine.ANIMATION_GROUP_NONPAUSABLE,
+            CombatEngine.ANIMATION_GROUP};
     /**
      * Combat plugins set up for a real battle, screen-wide: BoxUtil installs its shader passes (blur, bloom) and cleans
      * up its campaign rendering, UIUtil clears its global UI state and takes over as the combat UI.
@@ -60,16 +62,19 @@ public final class EngineSandbox {
     private static final String[] SHIELD_TEXTURES = {"graphics/fx/shields256.png", "graphics/fx/shields256ringd.png",
             "graphics/fx/shields128c.png", "graphics/fx/shields128ringc.png", "graphics/fx/shields64.png",
             "graphics/fx/shields64ring.png"};
+    /**
+     * The engine's custom data key, followed by the ship id, for the AI flags it makes up for a ship without an AI
+     * (the preview's ships). Nothing in the engine removes them.
+     */
+    private static final String NO_AI_FLAGS_KEY_PREFIX = "nonAI_SAIF_";
     private static final float MAP_HALF_SIZE = 15000f;
     /** Scenes extend toward +x from their origin (weapon host at the origin, targets and waves at weapon range). */
     private static final float SCENE_ORIGIN_X = -5000f;
     private static final float[] SCENE_ORIGIN_Y = {0f, 5000f, -5000f, 10000f, -10000f};
-    private static boolean loggedInheritedState;
 
     private CombatEngine engine;
     private final Object input = Refl.newInstance(StarfarerBridge.inputClass);
-    private final AnimationManager[] ownAnims = new AnimationManager[ANIM_GROUPS.length];
-    private final List<String> strippedPlugins = new ArrayList<>();
+    private final AnimationManager[] ownAnimationManagers = new AnimationManager[ANIMATION_GROUPS.length];
     private int scenes;
     /** Texture holding the screen while render() draws over it; 0 until the first render. */
     private int screenCopy;
@@ -79,7 +84,7 @@ public final class EngineSandbox {
     private boolean swapped;
     private Object savedInstance;
     private CombatEngineAPI savedGlobal;
-    private final AnimationManager[] savedAnims = new AnimationManager[ANIM_GROUPS.length];
+    private final AnimationManager[] savedAnimationManagers = new AnimationManager[ANIMATION_GROUPS.length];
     private Object savedSimulatorEntry;
 
     private EngineSandbox() {
@@ -88,7 +93,7 @@ public final class EngineSandbox {
     /** Builds and initialises a private engine; the campaign's engine is back in place when this returns. */
     public static EngineSandbox create() {
         EngineSandbox sandbox = new EngineSandbox();
-        for (int i = 0; i < ANIM_GROUPS.length; i++) sandbox.ownAnims[i] = new AnimationManager();
+        for (int i = 0; i < ANIMATION_GROUPS.length; i++) sandbox.ownAnimationManagers[i] = new AnimationManager();
         sandbox.swapIn();
         boolean ok = false;
         try {
@@ -128,10 +133,6 @@ public final class EngineSandbox {
         return engine;
     }
 
-    public List<String> strippedPlugins() {
-        return strippedPlugins;
-    }
-
     public int scenes() {
         return scenes;
     }
@@ -141,9 +142,9 @@ public final class EngineSandbox {
         savedInstance = StarfarerBridge.engineInstance.get(null);
         savedGlobal = Global.getCombatEngine();
         Map<String, AnimationManager> managers = animManagers();
-        for (int i = 0; i < ANIM_GROUPS.length; i++) {
-            savedAnims[i] = managers.get(ANIM_GROUPS[i]);
-            managers.put(ANIM_GROUPS[i], ownAnims[i]);
+        for (int i = 0; i < ANIMATION_GROUPS.length; i++) {
+            savedAnimationManagers[i] = managers.get(ANIMATION_GROUPS[i]);
+            managers.put(ANIMATION_GROUPS[i], ownAnimationManagers[i]);
         }
         StarfarerBridge.engineInstance.set(null, engine);
         if (engine != null) Global.setCombatEngine(engine);
@@ -154,14 +155,13 @@ public final class EngineSandbox {
     }
 
     public void swapOut() {
-        if (!swapped) return;
         StarfarerBridge.engineInstance.set(null, savedInstance);
         Global.setCombatEngine(savedGlobal);
         Map<String, AnimationManager> managers = animManagers();
-        for (int i = 0; i < ANIM_GROUPS.length; i++) {
-            if (savedAnims[i] != null) managers.put(ANIM_GROUPS[i], savedAnims[i]);
-            else managers.remove(ANIM_GROUPS[i]);
-            savedAnims[i] = null;
+        for (int i = 0; i < ANIMATION_GROUPS.length; i++) {
+            if (savedAnimationManagers[i] != null) managers.put(ANIMATION_GROUPS[i], savedAnimationManagers[i]);
+            else managers.remove(ANIMATION_GROUPS[i]);
+            savedAnimationManagers[i] = null;
         }
         Map<Object, Object> session = session();
         if (savedSimulatorEntry != null) session.put(SIMULATOR_SESSION_KEY, savedSimulatorEntry);
@@ -182,8 +182,9 @@ public final class EngineSandbox {
     }
 
     /**
-     * Removes every ship, projectile, missile and beam. Removal is applied by the next engine step; nothing else needs
-     * to happen in between since the next scene is built elsewhere on the map. Call while swapped in.
+     * Removes every ship, projectile, missile and beam, and the AI flags kept for its ships. Removal is applied by the
+     * next engine step; nothing else needs to happen in between since the next scene is built elsewhere on the map.
+     * Call while swapped in.
      */
     public void clearScene() {
         requireSwapped();
@@ -196,13 +197,13 @@ public final class EngineSandbox {
         doomed.addAll(e.getAsteroids());
         for (CombatEntityAPI entity : doomed) e.removeEntity(entity);
         for (BeamAPI beam : new ArrayList<>(e.getBeams())) e.removeObject(beam);
+        e.getCustomData().keySet().removeIf(key -> key.startsWith(NO_AI_FLAGS_KEY_PREFIX));
     }
 
     /** One simulation step; call while swapped in. */
     public void advance(float dt) {
         requireSwapped();
-        ownAnims[1].advanceAll(dt);
-        ownAnims[0].advanceAll(dt);
+        for (AnimationManager manager : ownAnimationManagers) manager.advanceAll(dt);
         StarfarerBridge.engineAdvance.invoke(engine, dt, input);
     }
 
@@ -266,7 +267,7 @@ public final class EngineSandbox {
             float[] bounds = worldBounds(views, count);
             float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
             float unitsPerPixelY = views[0].worldHeight / views[0].pixelHeight;
-            screenCopy = copyScreenCorner(screenCopy, screenWidth, screenHeight);
+            screenCopy = copyScreen(screenCopy);
             aimCamera(0, 0, screenWidth, screenHeight, bounds[0], bounds[1], screenWidth * unitsPerPixelX,
                     screenHeight * unitsPerPixelY);
             GL11.glClearColor(clearRgb[0], clearRgb[1], clearRgb[2], 1f);
@@ -327,12 +328,10 @@ public final class EngineSandbox {
         return (int) (Global.getSettings().getScreenHeightPixels() * Display.getPixelScaleFactor());
     }
 
-    /**
-     * Copies the lower left (width, height) of the screen into a screen-sized texture, made here when {@code texture}
-     * is 0. Returns the texture.
-     */
-    private static int copyScreenCorner(int texture, int width, int height) {
+    /** Copies the screen into a texture, made here when {@code texture} is 0. Returns the texture. */
+    private static int copyScreen(int texture) {
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        int width = screenWidthPixels(), height = screenHeightPixels();
         if (texture != 0) {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
             GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
@@ -341,7 +340,7 @@ public final class EngineSandbox {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
-            GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, 0, 0, screenWidthPixels(), screenHeightPixels(), 0);
+            GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, 0, 0, width, height, 0);
         }
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         return texture;
@@ -383,7 +382,7 @@ public final class EngineSandbox {
         }
         resetFixedFunctionState();
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
-        sceneCopy = copyScreenCorner(sceneCopy, screenWidth, screenHeight);
+        sceneCopy = copyScreen(sceneCopy);
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glViewport(0, 0, screenWidth, screenHeight);
@@ -428,15 +427,6 @@ public final class EngineSandbox {
      */
     private static void resetFixedFunctionState() {
         ContextCapabilities caps = GLContext.getCapabilities();
-        if (!loggedInheritedState) {
-            loggedInheritedState = true;
-            Log.info("inherited GL state: program=%d activeTexture=0x%x texEnv=0x%x blend=%s alphaTest=%s depth=%s arrayBuffer=%d",
-                    caps.OpenGL20 ? GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM) : -1,
-                    caps.OpenGL13 ? GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE) : -1,
-                    GL11.glGetTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE),
-                    GL11.glIsEnabled(GL11.GL_BLEND), GL11.glIsEnabled(GL11.GL_ALPHA_TEST), GL11.glIsEnabled(GL11.GL_DEPTH_TEST),
-                    caps.OpenGL15 ? GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING) : -1);
-        }
         if (caps.OpenGL20) GL20.glUseProgram(0);
         if (caps.OpenGL13) {
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
@@ -459,9 +449,8 @@ public final class EngineSandbox {
         GL11.glColor4f(1f, 1f, 1f, 1f);
     }
 
-    /** Tears the private engine down; safe to call whether or not it is swapped in. */
+    /** Tears the private engine down; call while swapped out. */
     public void destroy() {
-        if (engine == null) return;
         if (screenCopy != 0) {
             GL11.glDeleteTextures(screenCopy);
             screenCopy = 0;
@@ -470,8 +459,7 @@ public final class EngineSandbox {
             GL11.glDeleteTextures(sceneCopy);
             sceneCopy = 0;
         }
-        boolean wasSwapped = swapped;
-        if (!wasSwapped) swapIn();
+        swapIn();
         try {
             destroyWhileSwapped();
         } finally {
@@ -496,7 +484,7 @@ public final class EngineSandbox {
             String name = p.getClass().getName();
             if (hasPrefix(name, STRIPPED_PLUGIN_PREFIXES)) {
                 api().removePlugin(p);
-                strippedPlugins.add(name);
+                Log.info("removed combat plugin %s from the preview engine", name);
             }
         }
     }

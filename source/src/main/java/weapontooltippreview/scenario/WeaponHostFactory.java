@@ -1,33 +1,42 @@
 package weapontooltippreview.scenario;
 
 import com.fs.starfarer.api.Global;
-import com.fs.starfarer.api.combat.ShipAPI.HullSize;
+import com.fs.starfarer.api.combat.CombatEngineAPI;
+import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.ShipHullSpecAPI;
-import com.fs.starfarer.api.combat.ShipHullSpecAPI.ShipTypeHints;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
+import com.fs.starfarer.api.combat.WeaponAPI;
+import com.fs.starfarer.api.fleet.FleetMemberAPI;
+import com.fs.starfarer.api.fleet.FleetMemberType;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.WeaponGroupSpec;
 import com.fs.starfarer.api.loading.WeaponGroupType;
 import com.fs.starfarer.api.loading.WeaponSlotAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
+import com.fs.starfarer.campaign.fleet.FleetData;
+import com.fs.starfarer.campaign.fleet.FleetMember;
+import org.lwjgl.util.vector.Vector2f;
 import weapontooltippreview.Log;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-/** Picks the ship that carries the previewed weapon: a copy of the refit ship, else a generic vanilla hull, else the fighter. */
+/**
+ * Picks and deploys the weapon host. For a weapon: a copy of the refit ship, else the generic host for its size; the
+ * fighter for a weapon on a wing. For a wing: the refit ship when it has bays, else the generic carrier.
+ */
 final class WeaponHostFactory {
 
-    /** Generic weapon host per weapon size. Each mounts every type of its size at that size */
+    /** Generic weapon host per weapon size fitting all types (small, medium, large). */
     private static final String[] WEAPON_HOSTS = {"wayfarer", "vigilance", "prometheus2"};
     private static final String GENERIC_WEAPON_HOST_VARIANT_ID = Scenario.PREVIEW_SOURCE_ID + "_weapon_host";
-    /** Generic carriers, smallest first: Condor (destroyer, two bays), Drover, Heron. */
-    private static final String[] CARRIERS = {"condor", "drover", "heron"};
-    /** Threat hullmod required for threat weapons, added to generic hulls for preview */
-    private static final String[][] REQUIRED_HULLMODS = {{"fragment", "fragment_swarm"}};
+    /** Generic carrier: the Condor, a destroyer with two bays. */
+    private static final String CARRIER = "condor";
+    /** Fragment weapons only fire with this hullmod: the generic host gets it, a refit ship stays as fitted. */
+    private static final String FRAGMENT_TAG = "fragment";
+    private static final String FRAGMENT_HULLMOD = "fragment_swarm";
 
-    static final class WeaponHostPlan {
+    private static final class WeaponHostPlan {
         final ShipVariantAPI variant;
         final String source;
         /** The previewed weapon's slot: the weapon host may carry the same weapon elsewhere (built-ins). */
@@ -72,27 +81,87 @@ final class WeaponHostFactory {
     private WeaponHostFactory() {
     }
 
-    static WeaponHostPlan plan(WeaponSpecAPI spec, RefitShip refit) {
+    /** Plans first, so a subject that cannot be shown throws {@link NoPreviewException} before anything spawns. */
+    static WeaponHost create(CombatEngineAPI engine, PreviewSubject subject, RefitShip refit, Vector2f origin) {
+        FighterWingSpecAPI wing = subject.wingId != null
+                ? Global.getSettings().getFighterWingSpec(subject.wingId) : null;
+        WeaponHostPlan plan;
+        if (subject.weaponId == null) {
+            plan = planWing(wing, refit);
+        } else {
+            WeaponSpecAPI spec = Global.getSettings().getWeaponSpec(subject.weaponId);
+            plan = wing != null ? planFighter(wing, spec) : plan(spec, refit);
+        }
+        ShipAPI ship = deploy(engine, plan, refit, origin);
+        WeaponAPI weapon = subject.weaponId != null ? weaponAt(ship, plan.slotId, subject.weaponId) : null;
+        if (plan.wingId != null) settleFighter(engine, ship, weapon, plan.slotAngle, origin);
+        return new WeaponHost(engine, ship, weapon, subject.weaponId == null ? wing : null, plan.source);
+    }
+
+    /** With the refit ship's officer, fleet (its skills apply) and CR when the plan copies it. */
+    private static ShipAPI deploy(CombatEngineAPI engine, WeaponHostPlan plan, RefitShip refit, Vector2f origin) {
+        FleetMemberAPI member = plan.wingId != null
+                ? Global.getFactory().createFleetMember(FleetMemberType.FIGHTER_WING, plan.wingId)
+                : Global.getFactory().createFleetMember(FleetMemberType.SHIP, plan.variant);
+        float cr = Scenario.DEPLOY_CR;
+        if (plan.fromRefit) {
+            member.setCaptain(refit.member.getCaptain());
+            if (refit.member.getFleetData() != null) {
+                ((FleetMember) member).setFleetData((FleetData) refit.member.getFleetData());
+            }
+            cr = Math.max(cr, refit.member.getRepairTracker().getCR());
+        }
+        return Scenario.deploy(engine, member, cr, Scenario.WEAPON_HOST_OWNER, origin, -plan.slotAngle);
+    }
+
+    private static WeaponAPI weaponAt(ShipAPI ship, String slotId, String weaponId) {
+        for (WeaponAPI w : ship.getAllWeapons()) {
+            if (w.getSlot().getId().equals(slotId) && w.getId().equals(weaponId)) return w;
+        }
+        throw new IllegalStateException("weapon missing on spawned weapon host");
+    }
+
+    /**
+     * A wing deploys whole, and every deployed ship is advanced for a moment before the fleet manager hands it over. The
+     * scene keeps one fighter, put back on its spot with the weapon along the line to the dummy (+x): weapons that cannot
+     * turn stay at whatever angle they had.
+     */
+    private static void settleFighter(CombatEngineAPI engine, ShipAPI fighter, WeaponAPI weapon, float slotAngle,
+                                      Vector2f origin) {
+        for (ShipAPI other : new ArrayList<>(fighter.getWing().getWingMembers())) {
+            if (other != fighter) engine.removeEntity(other);
+        }
+        fighter.getLocation().set(origin);
+        fighter.getVelocity().set(0f, 0f);
+        fighter.setAngularVelocity(0f);
+        fighter.setFacing(-slotAngle);
+        weapon.setCurrAngle(0f);
+    }
+
+    private static WeaponHostPlan plan(WeaponSpecAPI spec, RefitShip refit) {
         WeaponHostPlan plan = refit != null ? fromRefit(spec, refit) : null;
-        if (plan == null) plan = generic(spec, refit != null ? refit.variant.getHullSpec() : null);
-        if (plan == null) throw new NoPreviewException("no hull has a slot for " + spec.getWeaponId());
+        if (plan == null) plan = generic(spec);
+        if (plan == null) throw new NoPreviewException("no weapon host has a slot for " + spec.getWeaponId());
         return plan;
     }
 
     /** The wing's fighter, with the weapon cycled to */
-    static WeaponHostPlan planFighter(FighterWingSpecAPI wing, WeaponSpecAPI spec) {
+    private static WeaponHostPlan planFighter(FighterWingSpecAPI wing, WeaponSpecAPI spec) {
         ShipVariantAPI variant = wing.getVariant();
         WeaponSlotAPI best = null;
         for (String slotId : variant.getFittedWeaponSlots()) {
             WeaponSlotAPI slot = variant.getSlot(slotId);
-            if (slot == null || !spec.getWeaponId().equals(variant.getWeaponId(slotId))) continue;
+            if (!spec.getWeaponId().equals(variant.getWeaponId(slotId))) continue;
             if (best == null || Math.abs(slot.getAngle()) < Math.abs(best.getAngle())) best = slot;
         }
         if (best == null) throw new NoPreviewException(wing.getId() + " does not carry " + spec.getWeaponId());
         return new WeaponHostPlan(wing, best);
     }
 
-    /** The ship being refitted, with its real stats */
+    /**
+     * The ship being refitted, with its real stats: the weapon in the hovered slot when it is built in there or fits,
+     * else in the best slot that fits.
+     */
     private static WeaponHostPlan fromRefit(WeaponSpecAPI spec, RefitShip refit) {
         ShipVariantAPI variant = refit.variant.clone();
         stripModules(variant);
@@ -103,13 +172,8 @@ final class WeaponHostFactory {
         String how = "clicked";
         boolean builtIn = slot != null && isBuiltInAt(hull, slot, spec);
         if (!builtIn && (slot == null || !fits(slot, spec))) {
-            slot = builtInSlot(hull, spec);
-            builtIn = slot != null;
-            how = "built-in";
-            if (!builtIn) {
-                slot = bestSlot(hull, spec);
-                how = "best fit";
-            }
+            slot = bestSlot(hull, spec);
+            how = "best fit";
         }
         if (slot == null) {
             Log.info("refit ship %s has no slot for %s; using a generic weapon host", variant.getHullVariantId(),
@@ -121,66 +185,28 @@ final class WeaponHostFactory {
         return new WeaponHostPlan(variant, slot, "refit " + refit.member.getShipName() + ", " + how + " slot", true);
     }
 
-    /**The refit ship's hull, tried first for a weapon built into it. */
-    private static WeaponHostPlan generic(WeaponSpecAPI spec, ShipHullSpecAPI preferred) {
-        List<ShipHullSpecAPI> candidates = new ArrayList<>();
-        try {
-            candidates.add(Global.getSettings().getHullSpec(
-                    WEAPON_HOSTS[Math.min(spec.getSize().ordinal(), WEAPON_HOSTS.length - 1)]));
-        } catch (RuntimeException ignored) {
-        }
-        candidates.addAll(Global.getSettings().getAllShipHullSpecs());
-        for (ShipHullSpecAPI hull : candidates) {
-            if (!deploysAlone(hull) || hull.isDHull() || hull.getHints().contains(ShipTypeHints.SHIP_WITH_MODULES)) continue;
-            WeaponSlotAPI slot = bestSlot(hull, spec);
-            if (slot == null) continue;
-            ShipVariantAPI variant = Global.getSettings().createEmptyVariant(GENERIC_WEAPON_HOST_VARIANT_ID, hull);
-            variant.addWeapon(slot.getId(), spec.getWeaponId());
-            soloWeaponGroup(variant, slot.getId());
-            return new WeaponHostPlan(variant, slot, "generic" + addRequiredHullmods(variant, spec), false);
-        }
-        // A weapon that only exists built in fits no slot
-        candidates.add(0, preferred);
-        for (ShipHullSpecAPI hull : candidates) {
-            if (!deploysAlone(hull)) continue;
-            WeaponSlotAPI slot = builtInSlot(hull, spec);
-            if (slot == null) continue;
-            ShipVariantAPI variant = Global.getSettings().createEmptyVariant(GENERIC_WEAPON_HOST_VARIANT_ID, hull);
-            if (!spec.getWeaponId().equals(variant.getWeaponId(slot.getId()))) variant.addWeapon(slot.getId(), spec.getWeaponId());
-            soloWeaponGroup(variant, slot.getId());
-            return new WeaponHostPlan(variant, slot,
-                    "built-in on " + hull.getHullId() + addRequiredHullmods(variant, spec), false);
-        }
-        return null;
-    }
-
-    /** Installs what the weapon needs to fire on a generic weapon host (a refit ship stays as the player fitted it) */
-    private static String addRequiredHullmods(ShipVariantAPI variant, WeaponSpecAPI spec) {
-        StringBuilder added = new StringBuilder();
-        for (String[] rule : REQUIRED_HULLMODS) {
-            if (!spec.hasTag(rule[0]) || variant.hasHullMod(rule[1])) continue;
-            try {
-                Global.getSettings().getHullModSpec(rule[1]);
-                variant.addMod(rule[1]);
-                added.append(" + ").append(rule[1]);
-            } catch (RuntimeException e) {
-                Log.info("%s needs hullmod %s, which is unavailable: %s", spec.getWeaponId(), rule[1], e);
-            }
-        }
-        return added.toString();
+    /** The generic weapon host for the weapon's size, the weapon in its best slot; null if none fits. */
+    private static WeaponHostPlan generic(WeaponSpecAPI spec) {
+        ShipHullSpecAPI host = Global.getSettings().getHullSpec(WEAPON_HOSTS[spec.getSize().ordinal()]);
+        WeaponSlotAPI slot = bestSlot(host, spec);
+        if (slot == null) return null;
+        ShipVariantAPI variant = Global.getSettings().createEmptyVariant(GENERIC_WEAPON_HOST_VARIANT_ID, host);
+        variant.addWeapon(slot.getId(), spec.getWeaponId());
+        soloWeaponGroup(variant, slot.getId());
+        boolean fragment = spec.hasTag(FRAGMENT_TAG);
+        if (fragment) variant.addMod(FRAGMENT_HULLMOD);
+        return new WeaponHostPlan(variant, slot, fragment ? "generic + " + FRAGMENT_HULLMOD : "generic", false);
     }
 
     // ------------------------------------------------------------------ carriers
 
     /**
      * A carrier for the wing, holding it in one bay: the ship being refitted when it has fighter bays (its carrier
-     * skills and hullmods apply), else a generic vanilla carrier.
+     * skills and hullmods apply), else the generic carrier.
      */
-    static WeaponHostPlan planWing(FighterWingSpecAPI wing, RefitShip refit) {
+    private static WeaponHostPlan planWing(FighterWingSpecAPI wing, RefitShip refit) {
         WeaponHostPlan plan = refit != null ? carrierFromRefit(wing, refit) : null;
-        if (plan == null) plan = genericCarrier(wing);
-        if (plan == null) throw new NoPreviewException("no carrier for " + wing.getId());
-        return plan;
+        return plan != null ? plan : genericCarrier(wing);
     }
 
     /**
@@ -210,26 +236,12 @@ final class WeaponHostFactory {
                 "refit " + refit.member.getShipName() + (builtIn ? ", built-in wing" : ", bay " + bay), true);
     }
 
-    /** The first vanilla carrier there is (any hull with a free bay as a fallback), the wing in its first bay. */
+    /** The generic carrier, the wing in its first bay. */
     private static WeaponHostPlan genericCarrier(FighterWingSpecAPI wing) {
-        List<ShipHullSpecAPI> candidates = new ArrayList<>();
-        for (String id : CARRIERS) {
-            try {
-                candidates.add(Global.getSettings().getHullSpec(id));
-            } catch (RuntimeException ignored) {
-            }
-        }
-        candidates.addAll(Global.getSettings().getAllShipHullSpecs());
-        for (ShipHullSpecAPI hull : candidates) {
-            if (!deploysAlone(hull) || hull.isDHull() || hull.getHints().contains(ShipTypeHints.SHIP_WITH_MODULES)
-                    || hull.getFighterBays() <= 0 || !hull.getBuiltInWings().isEmpty()) {
-                continue;
-            }
-            ShipVariantAPI variant = Global.getSettings().createEmptyVariant(Scenario.PREVIEW_SOURCE_ID + "_carrier", hull);
-            variant.setWingId(0, wing.getId());
-            return new WeaponHostPlan(variant, "generic carrier", false);
-        }
-        return null;
+        ShipVariantAPI variant = Global.getSettings().createEmptyVariant(Scenario.PREVIEW_SOURCE_ID + "_carrier",
+                Global.getSettings().getHullSpec(CARRIER));
+        variant.setWingId(0, wing.getId());
+        return new WeaponHostPlan(variant, "generic carrier", false);
     }
 
     /** Every weapon but the built-in ones. */
@@ -250,12 +262,6 @@ final class WeaponHostFactory {
         for (String slotId : slots) variant.setModuleVariant(slotId, null);
         variant.getStationModules().clear();
         Log.info("refit ship %s: %d modules left out", variant.getHullVariantId(), slots.size());
-    }
-
-    /** A hull that deploys as a ship of its own (not a fighter, station or module). */
-    private static boolean deploysAlone(ShipHullSpecAPI hull) {
-        return hull != null && hull.getHullSize() != HullSize.FIGHTER && !hull.getHints().contains(ShipTypeHints.STATION)
-                && !hull.getHints().contains(ShipTypeHints.MODULE);
     }
 
     /**
@@ -284,17 +290,6 @@ final class WeaponHostFactory {
         boolean bExact = b.getSlotSize() == spec.getSize();
         if (aExact != bExact) return aExact;
         return Math.abs(a.getAngle()) < Math.abs(b.getAngle());
-    }
-
-    /** The hull's slot with this weapon built in, the most forward if several; null if it has none. */
-    private static WeaponSlotAPI builtInSlot(ShipHullSpecAPI hull, WeaponSpecAPI spec) {
-        WeaponSlotAPI best = null;
-        for (Map.Entry<String, String> e : hull.getBuiltInWeapons().entrySet()) {
-            if (!spec.getWeaponId().equals(e.getValue())) continue;
-            WeaponSlotAPI slot = hull.getWeaponSlotAPI(e.getKey());
-            if (slot != null && (best == null || Math.abs(slot.getAngle()) < Math.abs(best.getAngle()))) best = slot;
-        }
-        return best;
     }
 
     private static boolean isBuiltInAt(ShipHullSpecAPI hull, WeaponSlotAPI slot, WeaponSpecAPI spec) {

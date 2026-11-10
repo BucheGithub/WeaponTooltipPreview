@@ -2,8 +2,6 @@ package weapontooltippreview.ui;
 
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CoreUITabId;
-import com.fs.starfarer.api.combat.ShipVariantAPI;
-import com.fs.starfarer.api.impl.codex.CodexDataV2;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
 import com.fs.starfarer.api.ui.Alignment;
@@ -32,11 +30,10 @@ import java.util.WeakHashMap;
 
 /**
  * Finds live weapon and fighter LPC tooltips (direct children of the campaign screen panel while shown) and injects the
- * preview panel between the description and the "You own a total of…" line, growing the tooltip downward.
+ * preview panel between the description and the weapon or wing data, growing the tooltip downward.
  */
 final class TooltipWatcher {
 
-    private static final String OWN_LINE_PREFIX = "You own a total";
     private static final float PREVIEW_HEIGHT = 150f;
     private static final float GAP = 6f;
     private static final float SCREEN_MARGIN = 4f;
@@ -218,51 +215,45 @@ final class TooltipWatcher {
         spec = f != null ? f.get(tip) : null;
         if (!(spec instanceof FighterWingSpecAPI)) return null;
         FighterWingSpecAPI wing = (FighterWingSpecAPI) spec;
-        return new PreviewSubject(weaponOnPage(tip, wing), wing.getId());
+        return new PreviewSubject(weaponOnPage(tip), wing.getId());
     }
 
-    /** The tooltip points its Codex key at what the page describes; null on the wing's own pages. */
-    private static String weaponOnPage(Object tip, FighterWingSpecAPI wing) {
-        String codexEntryId = ((StandardTooltipV2) tip).getCodexEntryId();
-        ShipVariantAPI variant = wing.getVariant();
-        for (String slotId : variant.getFittedWeaponSlots()) {
-            String weaponId = variant.getWeaponId(slotId);
-            if (CodexDataV2.getWeaponEntryId(weaponId).equals(codexEntryId)) return weaponId;
-        }
-        return null;
+    /**
+     * The page's weapon, from the tooltip's own list of its fighters' weapons: page n shows the n-th, page 0 the wing.
+     * Not the tooltip's Codex key: the game leaves it on the wing for weapons the Codex hides.
+     */
+    private static String weaponOnPage(Object tip) {
+        Refl.ReflectedField pageField = Refl.fieldNamed(tip.getClass(), "index");
+        Refl.ReflectedField weaponsField = Refl.fieldOfType(tip.getClass(), List.class, false);
+        if (pageField == null || pageField.type != int.class || weaponsField == null) return null;
+        int page = (Integer) pageField.get(tip);
+        List<?> weapons = (List<?>) weaponsField.get(tip);
+        if (page < 1 || page > weapons.size()) return null;
+        Object weapon = weapons.get(page - 1);
+        return weapon instanceof WeaponSpecAPI ? ((WeaponSpecAPI) weapon).getWeaponId() : null;
     }
 
     // ------------------------------------------------------------------ injection
 
-    private static final class Anchor {
-        final UIPanelAPI parent;
-        final UIComponentAPI node;
-        final String how;
-
-        Anchor(UIPanelAPI parent, UIComponentAPI node, String how) {
-            this.parent = parent;
-            this.node = node;
-            this.how = how;
-        }
-    }
-
     /** {@code running}: a preview panel to put back; null starts a new preview. */
     private void inject(Object tip, TipState s, CustomPanelAPI running, float originalTop) {
         stopRecreatingEveryFrame(tip, s);
-        Anchor a = findLabel(tip, null, OWN_LINE_PREFIX, 8);
-        if (a == null) a = belowLongestLabel(tip);
-        if (a == null) {
-            Log.info("tooltip #%d: no anchor found, cannot inject", s.id);
+        // The preview goes at the bottom of the description segment, above the data. The tooltip builds its contents in
+        // order: the segment (title, design type, description, cost, "You own a total") is all labels, and the data
+        // (the weapon's stats, a tooltip of their own, or the wing's stats panel) is the first component that is not.
+        UIPanelAPI parent = (UIPanelAPI) ((StandardTooltipV2) tip).getContents();
+        UIComponentAPI data = firstNonLabel(parent);
+        if (data == null) {
+            Log.info("tooltip #%d: no data below the description, cannot inject", s.id);
             return;
         }
 
         float hintBelow = hintOverhang(tip);
-        UIPanelAPI parent = a.parent;
         PositionAPI pp = parent.getPosition();
         float parentLeft = pp.getX();
         float parentTop = pp.getY() + pp.getHeight();
-        float anchorTop = UiTree.top(a.node);
-        float x0 = a.node.getPosition().getX() - parentLeft;
+        float anchorTop = UiTree.top(data);
+        float x0 = data.getPosition().getX() - parentLeft;
         float width = Math.max(100f, pp.getWidth() - 2f * x0);
         CustomPanelAPI panel = running != null ? running : newPreview(tip, s, width);
         float shift = panel.getPosition().getHeight() + GAP;
@@ -288,7 +279,8 @@ final class TooltipWatcher {
         }
 
         if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop, hintBelow);
-        Log.info("tooltip #%d: preview for %s injected via %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject, a.how,
+        Log.info("tooltip #%d: preview for %s injected above %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject,
+                data.getClass().getSimpleName(),
                 tip instanceof UIComponentAPI ? ((UIComponentAPI) tip).getPosition().getHeight() : 0f, hintBelow,
                 Global.getSettings().getScreenHeight());
     }
@@ -381,47 +373,10 @@ final class TooltipWatcher {
         tp.inBL(tp.getX() - px, bottom - py);
     }
 
-    private static Anchor findLabel(Object node, UIPanelAPI parent, String prefix, int depth) {
-        if (node instanceof LabelAPI && node instanceof UIComponentAPI && parent != null) {
-            String text = ((LabelAPI) node).getText();
-            if (text != null && text.startsWith(prefix)) return new Anchor(parent, (UIComponentAPI) node, "label '" + prefix + "'");
-        }
-        if (depth <= 0 || !(node instanceof UIPanelAPI)) return null;
-        for (Object c : UiTree.children(node)) {
-            Anchor a = findLabel(c, (UIPanelAPI) node, prefix, depth - 1);
-            if (a != null) return a;
+    private static UIComponentAPI firstNonLabel(UIPanelAPI contents) {
+        for (Object c : UiTree.children(contents)) {
+            if (c instanceof UIComponentAPI && !(c instanceof LabelAPI)) return (UIComponentAPI) c;
         }
         return null;
-    }
-
-    /** Fallback: the sibling directly below the longest label (assumed to be the description). */
-    private static Anchor belowLongestLabel(Object tip) {
-        Object[] best = new Object[2]; // {label, parent}
-        int[] bestLen = {0};
-        longestLabel(tip, null, 8, best, bestLen);
-        if (best[0] == null) return null;
-        UIComponentAPI desc = (UIComponentAPI) best[0];
-        UIPanelAPI parent = (UIPanelAPI) best[1];
-        float descBottom = desc.getPosition().getY();
-        UIComponentAPI next = null;
-        for (Object c : UiTree.children(parent)) {
-            if (!(c instanceof UIComponentAPI) || c == desc) continue;
-            float cTop = UiTree.top((UIComponentAPI) c);
-            if (cTop <= descBottom + 0.5f && (next == null || cTop > UiTree.top(next))) next = (UIComponentAPI) c;
-        }
-        return next == null ? null : new Anchor(parent, next, "below longest label");
-    }
-
-    private static void longestLabel(Object node, UIPanelAPI parent, int depth, Object[] best, int[] bestLen) {
-        if (node instanceof LabelAPI && node instanceof UIComponentAPI && parent != null) {
-            String text = ((LabelAPI) node).getText();
-            if (text != null && text.length() > bestLen[0]) {
-                bestLen[0] = text.length();
-                best[0] = node;
-                best[1] = parent;
-            }
-        }
-        if (depth <= 0 || !(node instanceof UIPanelAPI)) return;
-        for (Object c : UiTree.children(node)) longestLabel(c, (UIPanelAPI) node, depth - 1, best, bestLen);
     }
 }

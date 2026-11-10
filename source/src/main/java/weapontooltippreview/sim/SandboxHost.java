@@ -3,14 +3,10 @@ package weapontooltippreview.sim;
 import weapontooltippreview.Log;
 
 import java.util.Locale;
-import java.util.Map;
-import java.util.WeakHashMap;
 
 /**
- * Owns the one preview engine. Building an engine costs a visible hitch and a large burst of garbage, so it is kept
- * warm between hovers: each preview takes a cleared scene in it, and the engine is only rebuilt after
- * {@link #MAX_SCENES} scenes (bounding whatever a long-lived engine accumulates), after a failure, or after sitting
- * unused for {@link #IDLE_NANOS}.
+ * Owns the preview engine. 
+ * It is kept between hovers.
  */
 public final class SandboxHost {
 
@@ -24,9 +20,6 @@ public final class SandboxHost {
     private static long idleSince;
     private static int createFailures;
     private static boolean disabled;
-    private static int created;
-    /** Engines handed to destroyInstance; they should all be collected. Logged to catch leaks. */
-    private static final Map<Object, Boolean> DISCARDED = new WeakHashMap<>();
 
     private SandboxHost() {
     }
@@ -45,7 +38,6 @@ public final class SandboxHost {
             try {
                 sandbox = EngineSandbox.create();
                 createFailures = 0;
-                created++;
             } catch (RuntimeException e) {
                 if (++createFailures >= MAX_CREATE_FAILURES) {
                     disabled = true;
@@ -54,8 +46,7 @@ public final class SandboxHost {
                 }
                 throw e;
             }
-            Log.info("sandbox #%d created in %.1f ms; stripped %s; %s", created, (System.nanoTime() - t0) / 1e6,
-                    sandbox.strippedPlugins(), heap());
+            Log.info("sandbox created in %.1f ms; %s", (System.nanoTime() - t0) / 1e6, heap());
         }
         owner = newOwner;
         return sandbox;
@@ -85,15 +76,12 @@ public final class SandboxHost {
         EngineSandbox s = sandbox;
         sandbox = null;
         owner = null;
-        Object api = s.api();
         try {
             s.destroy();
         } catch (Throwable t) {
             Log.error("sandbox destroy failed", t);
         }
-        if (api != null) DISCARDED.put(api, Boolean.TRUE);
-        Log.info("sandbox discarded (%s) after %d scenes; discarded engines still reachable: %d; %s", why, s.scenes(),
-                DISCARDED.size(), heap());
+        Log.info("sandbox discarded (%s) after %d scenes; %s", why, s.scenes(), heap());
     }
 
     /** Called every campaign frame: releases an engine nobody has used for a while. */
