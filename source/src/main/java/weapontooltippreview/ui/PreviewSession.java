@@ -17,7 +17,6 @@ import weapontooltippreview.scenario.Scenario;
 import weapontooltippreview.scenario.WeaponHost;
 import weapontooltippreview.sim.CombatArcRenderer;
 import weapontooltippreview.sim.EngineSandbox;
-import weapontooltippreview.sim.PreviewSound;
 import weapontooltippreview.sim.SandboxHost;
 
 import java.awt.Color;
@@ -132,7 +131,7 @@ final class PreviewSession {
     void tick(float dt) {
         sandbox.swapIn();
         try {
-            applySoundLevel();
+            applySound();
             long t0 = System.nanoTime();
             float step = Math.min(dt, MAX_STEP);
             scenario.beforeStep(step);
@@ -151,21 +150,12 @@ final class PreviewSession {
     }
 
     /**
-     * Puts the sound listener at the scene and lowers the game's effects volume to the chosen level. At 0 (or below
-     * 100% when the volume control is missing) the listener stays far away, which mutes the scene.
+     * Puts the sound listener at the scene, where the preview plays at the player's sound effects volume. With sound
+     * off, the listener goes far away instead, which mutes the scene.
      */
-    private void applySoundLevel() {
-        float level = WeaponTooltipPreviewSettings.soundLevel();
-        boolean audible = level > 0f && (PreviewSound.isAvailable() || level >= 1f);
-        if (audible) {
-            Global.getSoundPlayer().setListenerPosOverrideOneFrame(new Vector2f(scenario.frameCenterX,
-                    scenario.frameCenterY));
-            if (level < 1f) PreviewSound.hold(level);
-            else PreviewSound.release();
-        } else {
-            Global.getSoundPlayer().setListenerPosOverrideOneFrame(FAR_AWAY);
-            PreviewSound.release();
-        }
+    private void applySound() {
+        Global.getSoundPlayer().setListenerPosOverrideOneFrame(
+                WeaponTooltipPreviewSettings.sound() ? scenario.listenerPosition() : FAR_AWAY);
     }
 
     /** Draws the preview into the panel's UI rectangle. Called from the panel's render(). */
@@ -219,7 +209,6 @@ final class PreviewSession {
         if (disposed) return;
         disposed = true;
         hud.dispose();
-        PreviewSound.release();
         if (failed) SandboxHost.discard("preview of " + subject + " failed");
         else SandboxHost.release(this);
         Log.info("session for %s ended after %d frames (avg sim %.2f ms, render %.2f ms); %s", subject, frames,

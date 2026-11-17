@@ -106,6 +106,11 @@ public abstract class Scenario {
         return targetDummy;
     }
 
+    /** Listener at the middle of the frame, unless the scenario puts it elsewhere. */
+    public Vector2f listenerPosition() {
+        return new Vector2f(frameCenterX, frameCenterY);
+    }
+
     /** Frames weapon host and dummy with a margin & extra room for the sway on moving targets */
     protected final void frameScene(float runMargin, float sway) {
         ShipAPI host = weaponHost.ship();

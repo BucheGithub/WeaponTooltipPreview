@@ -1,7 +1,6 @@
 package weapontooltippreview.bridge;
 
 import com.fs.graphics.anim.AnimationManager;
-import com.fs.starfarer.campaign.CampaignState;
 import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatState;
 import com.fs.starfarer.combat.systems.WeaponGroup;
@@ -10,8 +9,10 @@ import weapontooltippreview.Log;
 
 /**
  * What the mod needs from the game's core and cannot call directly, resolved once at application load. 
- * A required entry missing (a game update renamed it) disables the mod and leaves vanilla tooltips.
+ * Compatibility security : a required entry missing disables the mod and leaves vanilla tooltips.
  * Each platform's build is obfuscated separately, sometimes the Windows and macOS jars give the same member different names.
+ * TODO Windows: the 0.98.5a names (map bounds, arc select, refit panel) were only checked against the macOS
+ * starfarer_obf.jar. Check them against the Windows one.
  */
 public final class StarfarerBridge {
 
@@ -27,9 +28,6 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod mapSetBounds;
     public static Class<?> inputClass;
     public static Refl.ReflectedField animManagers;
-    public static Refl.ReflectedMethod campaignScreenPanel;
-    public static Refl.ReflectedMethod panelChildren;
-    public static Refl.ReflectedMethod panelChildrenCopy;
 
     // optional: the game's weapon arc, failure = no arc drawn
     public static Class<?> arcRendererClass;
@@ -42,13 +40,6 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod tooltipWidget;
     public static Refl.ReflectedMethod refitMember;
     public static Refl.ReflectedMethod refitShipDisplay;
-
-    // optional: the sound effects volume, failure = no granularity in preview sound settings
-    public static Refl.ReflectedMethod soundInstance;
-    public static Refl.ReflectedMethod soundVolumeGet;
-    public static Refl.ReflectedMethod soundVolumeSet;
-    public static Refl.ReflectedMethod soundVolume2Get;
-    public static Refl.ReflectedMethod soundVolume2Set;
 
     private static boolean ready;
 
@@ -69,11 +60,8 @@ public final class StarfarerBridge {
             engineAdvance = method(CombatEngine.class, "advance", float.class, ANY);
             mapClass = engineSetCombatMap.parameterTypes[0];
             inputClass = engineAdvance.parameterTypes[1];
-            mapSetBounds = method(mapClass, "super", float.class, float.class, float.class, float.class);
+            mapSetBounds = method(mapClass, new String[]{"super", "o00000"}, float.class, float.class, float.class, float.class);
             animManagers = field(AnimationManager.class, "managers");
-            campaignScreenPanel = method(CampaignState.class, "getScreenPanel");
-            panelChildren = method(StandardTooltipV2.class, "getChildrenNonCopy");
-            panelChildrenCopy = method(StandardTooltipV2.class, "getChildrenCopy");
             ready = true;
             Log.info("bridge: all required entries resolved");
         } catch (Throwable t) {
@@ -82,7 +70,8 @@ public final class StarfarerBridge {
 
         try {
             Class<?> renderer = field(CombatState.class, "arcRenderer").type;
-            arcSelectGroup = method(renderer, "Ò00000", WeaponGroup.class);
+            // 0.98.5a has a second (WeaponGroup) setter, o00000, that skips the fade; CombatState only calls new
+            arcSelectGroup = method(renderer, new String[]{"Ò00000", "new"}, WeaponGroup.class);
             arcAdvance = method(renderer, new String[]{"super", "o00000"}, float.class);
             arcRender = method(renderer, new String[]{"String", "Ô00000"});
             arcRendererClass = renderer;
@@ -91,7 +80,7 @@ public final class StarfarerBridge {
         }
 
         try {
-            Class<?> panel = Refl.classForName("com.fs.starfarer.coreui.refit.U");
+            Class<?> panel = classNamed("com.fs.starfarer.coreui.refit.U", "com.fs.starfarer.coreui.refit.Objectsuper");
             tooltipWidget = method(StandardTooltipV2.class, "getWidgetAttachedTo");
             refitMember = method(panel, "getMember");
             refitShipDisplay = method(panel, "getShipDisplay");
@@ -99,23 +88,18 @@ public final class StarfarerBridge {
         } catch (Throwable t) {
             Log.error("bridge: the refit panel is missing; previews use a generic ship", t);
         }
+    }
 
-        try {
-            // sound.C on Windows, sound.ooOO on macOS
-            Class<?> sound;
+    /** The first of these classes that exists. */
+    private static Class<?> classNamed(String... names) {
+        for (String name : names) {
             try {
-                sound = Refl.classForName("sound.C");
-            } catch (RuntimeException notWindows) {
-                sound = Refl.classForName("sound.ooOO");
+                return Refl.classForName(name);
+            } catch (RuntimeException absent) {
+                // try the next name
             }
-            soundVolumeGet = method(sound, "for");
-            soundVolumeSet = method(sound, "o00000", float.class);
-            soundVolume2Get = method(sound, "Object");
-            soundVolume2Set = method(sound, "Ò00000", float.class);
-            soundInstance = method(sound, "ö00000");
-        } catch (Throwable t) {
-            Log.error("bridge: the sound effects volume is missing; previews below 100% sound are muted", t);
         }
+        throw new IllegalStateException("no class " + String.join("|", names));
     }
 
     private static Refl.ReflectedField field(Class<?> owner, String name) {

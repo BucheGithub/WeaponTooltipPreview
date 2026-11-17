@@ -258,7 +258,7 @@ final class TooltipWatcher {
         CustomPanelAPI panel = running != null ? running : newPreview(tip, s, width);
         float shift = panel.getPosition().getHeight() + GAP;
 
-        for (Object c : UiTree.childrenCopy(parent)) {
+        for (Object c : UiTree.children(parent)) {
             if (!(c instanceof UIComponentAPI)) continue;
             PositionAPI cp = ((UIComponentAPI) c).getPosition();
             float cTop = cp.getY() + cp.getHeight();

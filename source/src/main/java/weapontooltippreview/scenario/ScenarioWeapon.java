@@ -47,6 +47,14 @@ final class ScenarioWeapon extends Scenario {
         canSplit = !weaponHost.pointDefense() && weapon.getRange() >= SPLIT_VIEW_MIN_RANGE;
     }
 
+    /**
+     * Listener centered on the ship firing
+     */
+    @Override
+    public Vector2f listenerPosition() {
+        return new Vector2f(weaponHost.weapon().getLocation());
+    }
+
     @Override
     protected String spawnLogDetails() {
         return String.format(Locale.ROOT, "tracking '%s'%s", weaponHost.weapon().getSpec().getTrackingStr(),

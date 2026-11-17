@@ -8,7 +8,7 @@ import java.util.Locale;
 
 /**
  * The player's choices from the LunaLib settings menu (data/config/LunaSettings.csv), cached and refreshed whenever
- * LunaLib reports a change. Scene settings apply from the next hover; the sound level, keys and logs apply at once.
+ * LunaLib reports a change. Scene settings apply from the next hover; sound, keys and logs apply at once.
  */
 public final class WeaponTooltipPreviewSettings {
 
@@ -31,7 +31,7 @@ public final class WeaponTooltipPreviewSettings {
             {"Gemini", "gemini_Standard"},
     };
 
-    private static float soundLevel = 0.7f;
+    private static boolean sound = true;
     private static String dummyVariantId = DEFAULT_DUMMY_VARIANT_ID;
     private static ShieldMode shieldMode = ShieldMode.FLUCTUATING;
     private static int threatModeKey = Keyboard.KEY_F5;
@@ -42,8 +42,9 @@ public final class WeaponTooltipPreviewSettings {
     private WeaponTooltipPreviewSettings() {
     }
 
-    public static float soundLevel() {
-        return soundLevel;
+    /** The preview plays its sound, at the player's sound effects volume. */
+    public static boolean sound() {
+        return sound;
     }
 
     public static String dummyVariantId() {
@@ -77,8 +78,7 @@ public final class WeaponTooltipPreviewSettings {
     private static void read() {
         Log.setEnabled(Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableLogs")));
 
-        Integer sound = LunaSettings.getInt(MOD_ID, "WeaponTooltipPreview_soundLevel");
-        if (sound != null) soundLevel = Math.max(0, Math.min(100, sound)) / 100f;
+        sound = !Boolean.FALSE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_sound"));
 
         String dummy = LunaSettings.getString(MOD_ID, "WeaponTooltipPreview_dummyShip");
         dummyVariantId = DEFAULT_DUMMY_VARIANT_ID;
@@ -94,8 +94,7 @@ public final class WeaponTooltipPreviewSettings {
         threatModeKey = keySetting("WeaponTooltipPreview_threatModeKey", Keyboard.KEY_F5);
         threatMissileKey = keySetting("WeaponTooltipPreview_threatMissileKey", Keyboard.KEY_F6);
         threatWingKey = keySetting("WeaponTooltipPreview_threatWingKey", Keyboard.KEY_F7);
-        Log.info("settings: sound %d%%, dummy %s, shield %s, threat keys %s %s %s", Math.round(soundLevel * 100),
-                dummyVariantId, shieldMode, Keyboard.getKeyName(threatModeKey), Keyboard.getKeyName(threatMissileKey),
+        Log.info("settings: sound %s, dummy %s, shield %s, threat keys %s %s %s", sound ? "on" : "off", dummyVariantId, shieldMode, Keyboard.getKeyName(threatModeKey), Keyboard.getKeyName(threatMissileKey),
                 Keyboard.getKeyName(threatWingKey));
     }
 

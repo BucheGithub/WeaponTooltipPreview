@@ -1,18 +1,17 @@
 package weapontooltippreview.ui;
 
+import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.ui.PositionAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
 import com.fs.starfarer.api.ui.UIPanelAPI;
 import com.fs.starfarer.campaign.CampaignState;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.state.AppDriver;
-import weapontooltippreview.bridge.Refl;
-import weapontooltippreview.bridge.StarfarerBridge;
 
 import java.util.Collections;
 import java.util.List;
 
-/** Helpers for walking the obfuscated UI tree through its public interfaces plus a few known method names. */
+/** Helpers for walking the obfuscated UI tree through its public API interfaces. */
 final class UiTree {
 
     private UiTree() {
@@ -25,8 +24,7 @@ final class UiTree {
     /** The campaign screen panel weapon tooltips are attached to; null outside the campaign. */
     static UIPanelAPI screenPanel(Object state) {
         if (!(state instanceof CampaignState)) return null;
-        Object panel = StarfarerBridge.campaignScreenPanel.invoke(state);
-        return panel instanceof UIPanelAPI ? (UIPanelAPI) panel : null;
+        return Global.getSettings().getScreenPanel();
     }
 
     /** True while the campaign Codex is open; previews stay out of it. */
@@ -34,18 +32,9 @@ final class UiTree {
         return state instanceof CampaignState && ((CampaignState) state).isShowingCodex();
     }
 
-    /** Live child list (no copy); do not mutate the tree while iterating it. */
-    static List<?> children(Object node) {
-        return childList(node, StarfarerBridge.panelChildren);
-    }
-
-    static List<?> childrenCopy(Object node) {
-        return childList(node, StarfarerBridge.panelChildrenCopy);
-    }
-
-    private static List<?> childList(Object node, Refl.ReflectedMethod getChildren) {
-        if (!getChildren.owner.isInstance(node)) return Collections.emptyList();
-        return (List<?>) getChildren.invoke(node);
+    /** A copy of the panel's child list, so the tree may change while it is iterated; empty for non-panels. */
+    static List<UIComponentAPI> children(Object node) {
+        return node instanceof UIPanelAPI ? ((UIPanelAPI) node).getChildrenCopy2() : Collections.<UIComponentAPI>emptyList();
     }
 
     static boolean isDescendant(Object ancestor, Object node, int maxDepth) {
@@ -57,10 +46,9 @@ final class UiTree {
         return false;
     }
 
-    /** Widgets come from several unrelated obfuscated classes; getParent() is looked up per class. */
-    static Object parent(Object widget) {
-        Refl.ReflectedMethod getParent = Refl.method(widget.getClass(), "getParent");
-        return getParent != null ? getParent.invoke(widget) : null;
+    /** Every game widget implements UIComponentAPI; null for anything else or at the root. */
+    static UIPanelAPI parent(Object widget) {
+        return widget instanceof UIComponentAPI ? ((UIComponentAPI) widget).getParent() : null;
     }
 
     static float top(UIComponentAPI c) {

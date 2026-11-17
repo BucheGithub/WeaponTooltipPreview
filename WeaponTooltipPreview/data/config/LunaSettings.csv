@@ -1,6 +1,6 @@
 fieldID,fieldName,fieldType,defaultValue,secondaryValue,fieldDescription,minValue,maxValue,tab
 WeaponTooltipPreview_header,Weapon Tooltip Preview,Header,Weapon Tooltip Preview,,,,,
-WeaponTooltipPreview_soundLevel,Sound level,Int,30,,"Volume of the preview sounds, as a percentage of your [sound effects volume]. [0] mutes them.",0,100,
+WeaponTooltipPreview_sound,Sound,Boolean,true,,"Plays the preview's weapon fire and impacts at your [sound effects volume]. Off keeps every preview silent.",,,
 WeaponTooltipPreview_dummyShip,Dummy ship,Radio,Drover,"Drover, Condor, Gemini","The ship your weapons fire at, stripped of weapons and fighters. In [point defense] previews it launches from every missile slot and fighter bay: [Drover] 4 small slots, 2 bays. [Condor] 1 medium slot, 2 bays. [Gemini] 1 medium slot, 1 bay.",,,
 WeaponTooltipPreview_shieldMode,Dummy shield,Radio,Fluctuating,"Always on, Always off, Fluctuating","How the dummy uses its shield. [Fluctuating] turns it on and off every [6 seconds].",,,
 WeaponTooltipPreview_threatModeKey,Threat mode key,Keycode,63,,"In [point defense] previews, cycles what the dummy launches: missiles, wings, or both.",,,

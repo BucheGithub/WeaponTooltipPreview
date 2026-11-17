@@ -9,7 +9,6 @@ import org.dark.shaders.util.ShaderHook;
 import weapontooltippreview.Log;
 import weapontooltippreview.WeaponTooltipPreviewSettings;
 import weapontooltippreview.scenario.ThreatSelection;
-import weapontooltippreview.sim.PreviewSound;
 import weapontooltippreview.sim.SandboxHost;
 
 import java.util.HashSet;
@@ -38,7 +37,6 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     public static void reset() {
         PreviewPanel.clearFailures();
         SandboxHost.reset();
-        PreviewSound.restoreNow();
     }
 
     @Override
@@ -58,7 +56,6 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
             tooltips.tick();
             tooltips.reapStale();
             SandboxHost.tick();
-            PreviewSound.tick();
         } catch (Throwable t) {
             errors++;
             if (loggedErrors.add(String.valueOf(t))) Log.error("tick failed (" + errors + "/" + MAX_ERRORS + ")", t);
@@ -66,7 +63,6 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
                 Log.error("preview disabled after " + errors + " errors");
                 tooltips.disposeAll();
                 SandboxHost.discard("controller disabled");
-                PreviewSound.restoreNow();
             }
         }
     }

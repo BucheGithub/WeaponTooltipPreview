@@ -28,7 +28,7 @@ dependencies {
         include("LazyLib*/jars/LazyLib.jar")
         include("LazyLib*/jars/internal/Kotlin-Runtime.jar") // LunaLib is Kotlin; LazyLib provides the runtime
         include("LunaLib*/jars/LunaLib.jar")
-        include("GraphicsLib*/jars/Graphics.jar") // optional: only called while it is enabled
+        include("*GraphicsLib*/jars/Graphics.jar") // optional: only called while it is enabled; often installed as "zz GraphicsLib-x.y.z"
     })
 }
 
