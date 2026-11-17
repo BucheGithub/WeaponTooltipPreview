@@ -29,6 +29,13 @@ public final class Log {
         if (enabled) LOGGER.info("[WeaponTooltipPreview] " + (args.length == 0 ? format : String.format(Locale.ROOT, format, args)));
     }
 
+    /** Used and maximum heap, for log lines. */
+    public static String heap() {
+        Runtime rt = Runtime.getRuntime();
+        return String.format(Locale.ROOT, "heap %dMB/%dMB", (rt.totalMemory() - rt.freeMemory()) >> 20,
+                rt.maxMemory() >> 20);
+    }
+
     public static void error(String message) {
         LOGGER.error("[WeaponTooltipPreview] " + message);
     }

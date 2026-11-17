@@ -40,13 +40,11 @@ public final class CombatArcRenderer {
             StarfarerBridge.arcRender.invoke(renderer);
             return;
         }
-        boolean controlled = engine.hasPlayerActuallyControlledARealShip();
         engine.setPlayerShip((Ship) ship);
         try {
             StarfarerBridge.arcRender.invoke(renderer);
         } finally {
             engine.setPlayerShip(previous != null && engine.isEntityInPlay(previous) ? (Ship) previous : null);
-            engine.setPlayerHasControlledShip(controlled);
         }
     }
 }

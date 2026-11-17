@@ -2,8 +2,6 @@ package weapontooltippreview.sim;
 
 import weapontooltippreview.Log;
 
-import java.util.Locale;
-
 /**
  * Owns the preview engine. 
  * It is kept between hovers.
@@ -46,28 +44,19 @@ public final class SandboxHost {
                 }
                 throw e;
             }
-            Log.info("sandbox created in %.1f ms; %s", (System.nanoTime() - t0) / 1e6, heap());
+            Log.info("sandbox created in %.1f ms; %s", (System.nanoTime() - t0) / 1e6, Log.heap());
         }
         owner = newOwner;
         return sandbox;
     }
 
-    /** The preview is done; its scene is cleared so nothing of it lingers while the engine waits for the next one. */
+    /**
+     * The preview is done and the engine waits, idle, for the next one.
+     */
     public static void release(Object who) {
         if (owner != who || sandbox == null) return;
         owner = null;
         idleSince = System.nanoTime();
-        try {
-            sandbox.swapIn();
-            try {
-                sandbox.clearScene();
-            } finally {
-                sandbox.swapOut();
-            }
-        } catch (Throwable t) {
-            Log.error("clearing the preview scene failed", t);
-            discard("clear failed");
-        }
     }
 
     /** Destroys the engine (failure, idle, game load). The next preview builds a fresh one. */
@@ -81,7 +70,7 @@ public final class SandboxHost {
         } catch (Throwable t) {
             Log.error("sandbox destroy failed", t);
         }
-        Log.info("sandbox discarded (%s) after %d scenes; %s", why, s.scenes(), heap());
+        Log.info("sandbox discarded (%s) after %d scenes; %s", why, s.scenes(), Log.heap());
     }
 
     /** Called every campaign frame: releases an engine nobody has used for a while. */
@@ -94,11 +83,5 @@ public final class SandboxHost {
         discard("game load");
         disabled = false;
         createFailures = 0;
-    }
-
-    public static String heap() {
-        Runtime rt = Runtime.getRuntime();
-        return String.format(Locale.ROOT, "heap %dMB/%dMB", (rt.totalMemory() - rt.freeMemory()) >> 20,
-                rt.maxMemory() >> 20);
     }
 }

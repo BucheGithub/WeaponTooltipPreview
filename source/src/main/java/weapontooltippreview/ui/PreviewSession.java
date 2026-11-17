@@ -212,7 +212,7 @@ final class PreviewSession {
         if (failed) SandboxHost.discard("preview of " + subject + " failed");
         else SandboxHost.release(this);
         Log.info("session for %s ended after %d frames (avg sim %.2f ms, render %.2f ms); %s", subject, frames,
-                frames > 0 ? simMs / frames : 0, renders > 0 ? renderMs / renders : 0, SandboxHost.heap());
+                frames > 0 ? simMs / frames : 0, renders > 0 ? renderMs / renders : 0, Log.heap());
     }
 
     // ------------------------------------------------------------------ layout

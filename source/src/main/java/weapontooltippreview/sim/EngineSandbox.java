@@ -13,7 +13,6 @@ import com.fs.state.AppDriver;
 import org.lwjgl.opengl.ARBFramebufferObject;
 import org.lwjgl.opengl.ContextCapabilities;
 import org.lwjgl.opengl.Display;
-import org.lwjgl.opengl.EXTFramebufferObject;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
@@ -28,48 +27,39 @@ import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * A private CombatEngine living next to the campaign's idle one. 
- * The engine is a JVM-wide singleton, so every interaction happens between swapIn and swapOut, which exchange the static instance.
- * One sandbox serves many previews.
- * Clear the previous scene and pick a different origin so particles and explosions still fading out are off camera.
+ * The engine is a JVM-wide singleton, so every interaction happens between swapIn and swapOut, which exchange the static instance with this one.
+ * One sandbox serves all previews.
  */
 public final class EngineSandbox {
 
-    /** The engine's animation groups, in the order the combat state advances them; advance() stands in for it. */
+    /** The engine's animation groups, in the order the combat state advances them */
     private static final String[] ANIMATION_GROUPS = {CombatEngine.ANIMATION_GROUP_NONPAUSABLE,
             CombatEngine.ANIMATION_GROUP};
-    /**
-     * Combat plugins set up for a real battle, screen-wide: BoxUtil installs its shader passes (blur, bloom) and cleans
-     * up its campaign rendering, UIUtil clears its global UI state and takes over as the combat UI.
-     */
+    /** Plugins that take over the whole screen or the combat UI */
     private static final String[] STRIPPED_PLUGIN_PREFIXES = {"org.boxutil.", "org.luoxb.uiutil."};
-    /**
-     * The session entry CombatEngine.isSimulation() looks for. Held while swapped in: a preview runs inside the live
-     * campaign, and mods keep their rewards, kill counts and battle-end handling out of a simulation.
+    /** The session entry CombatEngine.isSimulation() looks for.
      */
     private static final String SIMULATOR_SESSION_KEY = "run combat simulator";
     /**
-     * The game's shield textures. It loads them without mipmaps, and shrunk to a preview's zoom they pixelate, so
-     * render() gives them mipmaps while the engine draws.
+     * The game's shield textures. render() gives them mipmaps while the engine draws.
      */
     private static final String[] SHIELD_TEXTURES = {"graphics/fx/shields256.png", "graphics/fx/shields256ringd.png",
             "graphics/fx/shields128c.png", "graphics/fx/shields128ringc.png", "graphics/fx/shields64.png",
             "graphics/fx/shields64ring.png"};
-    /**
-     * The engine's custom data key, followed by the ship id, for the AI flags it makes up for a ship without an AI
-     * (the preview's ships). Nothing in the engine removes them.
-     */
+    /** The engine's custom data key, followed by the ship id; nothing in the engine removes them. */
     private static final String NO_AI_FLAGS_KEY_PREFIX = "nonAI_SAIF_";
+    /** OpenGL capabilities the engine's renderers expect off */
+    private static final int[] CAPS_OFF = {GL11.GL_DEPTH_TEST, GL11.GL_ALPHA_TEST, GL11.GL_LIGHTING,
+            GL11.GL_CULL_FACE, GL11.GL_STENCIL_TEST, GL11.GL_FOG, GL11.GL_COLOR_LOGIC_OP, GL11.GL_SCISSOR_TEST};
     private static final float MAP_HALF_SIZE = 15000f;
-    /** Scenes extend toward +x from their origin (weapon host at the origin, targets and waves at weapon range). */
+    /** Scenes extend toward +x from their origin */
     private static final float SCENE_ORIGIN_X = -5000f;
+    /** Several origins to cycle through on Y axis to let particles & vfx clear */
     private static final float[] SCENE_ORIGIN_Y = {0f, 5000f, -5000f, 10000f, -10000f};
 
     private CombatEngine engine;
@@ -90,41 +80,34 @@ public final class EngineSandbox {
     private EngineSandbox() {
     }
 
-    /** Builds and initialises a private engine; the campaign's engine is back in place when this returns. */
+    /** Builds and initialises a private engine */
     public static EngineSandbox create() {
         EngineSandbox sandbox = new EngineSandbox();
         for (int i = 0; i < ANIMATION_GROUPS.length; i++) sandbox.ownAnimationManagers[i] = new AnimationManager();
         sandbox.swapIn();
-        boolean ok = false;
         try {
             sandbox.engine = CombatEngine.getInstance();
-            // Ship.applyDamageInner needs a non-null combat UI. The title screen's state is the one its background battle
-            // uses, with stub callbacks; the app keeps every state registered for good.
+            // Damage needs a combat UI; the title screen's background battle uses this one.
             StarfarerBridge.engineSetCombatUI.invoke(sandbox.engine,
                     AppDriver.getInstance().getState(TitleScreenState.STATE_ID));
             Object map = Refl.newInstance(StarfarerBridge.mapClass);
             StarfarerBridge.mapSetBounds.invoke(map, -MAP_HALF_SIZE, MAP_HALF_SIZE, -MAP_HALF_SIZE, MAP_HALF_SIZE);
             StarfarerBridge.engineSetCombatMap.invoke(sandbox.engine, map);
-            sandbox.stripPlugins(map);
-            // GraphicsLib would otherwise unload every texture the battle's fleets do not use on the first step; a
-            // preview's ships load their maps on first use instead. The key is a compile-time constant, so this line
-            // runs without GraphicsLib.
+            sandbox.stripPlugins();
+            // Compile-time constant: safe without GraphicsLib. Stops it unloading textures this battle's fleets don't use.
             sandbox.engine.getCustomData().put(ShaderHook.TEXTURE_PRELOAD_KEY, true);
             sandbox.engine.createDummyFleetsIfNeeded();
             sandbox.engine.init();
             sandbox.engine.setPaused(false);
             sandbox.engine.preCombat();
             sandbox.engine.setDoNotEndCombat(true);
-            // A deployed flagship becomes the player's ship until the player has controlled one; a weapon host copied
-            // from the refit flagship counts as the flagship, as it carries the refit fleet.
+            // Otherwise a deployed flagship (the refit ship) becomes the player ship.
             sandbox.engine.setPlayerHasControlledShip(true);
-            ok = true;
+        } catch (RuntimeException | Error e) {
+            sandbox.destroyWhileSwapped();
+            throw e;
         } finally {
-            try {
-                if (!ok) sandbox.destroyWhileSwapped();
-            } finally {
-                sandbox.swapOut();
-            }
+            sandbox.swapOut();
         }
         return sandbox;
     }
@@ -172,7 +155,10 @@ public final class EngineSandbox {
         swapped = false;
     }
 
-    /** Clears the previous scene and returns the origin for the next one. Call while swapped in. */
+    /**
+     * Clears the previous scene and returns the origin for the next one.
+     * Call while swapped in.
+     */
     public Vector2f beginScene() {
         requireSwapped();
         clearScene();
@@ -182,22 +168,18 @@ public final class EngineSandbox {
     }
 
     /**
-     * Removes every ship, projectile, missile and beam, and the AI flags kept for its ships. Removal is applied by the
-     * next engine step; nothing else needs to happen in between since the next scene is built elsewhere on the map.
+     * Removes every ship, projectile, missile, asteroid and beam, and the AI flags kept for the ships. Removal is
+     * applied by the next engine step.
      * Call while swapped in.
      */
-    public void clearScene() {
+    private void clearScene() {
         requireSwapped();
-        CombatEngineAPI e = api();
-        // Missiles are projectiles too; each entity is removed once.
-        Set<CombatEntityAPI> doomed = Collections.newSetFromMap(new IdentityHashMap<CombatEntityAPI, Boolean>());
-        doomed.addAll(e.getShips());
-        doomed.addAll(e.getProjectiles());
-        doomed.addAll(e.getMissiles());
-        doomed.addAll(e.getAsteroids());
-        for (CombatEntityAPI entity : doomed) e.removeEntity(entity);
-        for (BeamAPI beam : new ArrayList<>(e.getBeams())) e.removeObject(beam);
-        e.getCustomData().keySet().removeIf(key -> key.startsWith(NO_AI_FLAGS_KEY_PREFIX));
+        List<CombatEntityAPI> doomed = new ArrayList<>(engine.getShips());
+        doomed.addAll(engine.getProjectiles());
+        doomed.addAll(engine.getAsteroids());
+        for (CombatEntityAPI entity : doomed) engine.removeEntity(entity);
+        for (BeamAPI beam : new ArrayList<>(engine.getBeams())) engine.removeObject(beam);
+        engine.getCustomData().keySet().removeIf(key -> key.startsWith(NO_AI_FLAGS_KEY_PREFIX));
     }
 
     /** One simulation step; call while swapped in. */
@@ -213,10 +195,7 @@ public final class EngineSandbox {
         public float worldX, worldY, worldWidth, worldHeight;
     }
 
-    /**
-     * Whether render() can draw the views from one engine render: the world rectangle covering them all has to fit on
-     * the screen at the first view's zoom.
-     */
+    /** Whether render() can draw the views from one engine render */
     public static boolean fitsOneRender(View[] views, int count) {
         float[] bounds = worldBounds(views, count);
         View first = views[0];
@@ -238,21 +217,14 @@ public final class EngineSandbox {
     }
 
     /**
-     * Shows each view's rectangle of the world in its rectangle of screen pixels, then runs {@code worldOverlay} once per
-     * view in that view's world projection, scissored to its rectangle. The views share the first one's zoom and must
-     * pass {@link #fitsOneRender}. Mirrors the title screen's projection helper. Call while swapped in.
-     * <p>
-     * The engine fills the whole screen because GraphicsLib's shaders assume it does: lights go by screen position, ships
-     * are drawn to screen-sized buffers, and bloom works on the whole screen in passes a scissor would cut. An offscreen
-     * target would not help: GraphicsLib ends its passes by binding framebuffer 0 itself, then reads the scene from there
-     * and draws its result there. So the screen is saved, the engine draws the world from the views' lower left corner
-     * once, and the screen is put back with each view's piece of that render in its rectangle. None of it is displayed
-     * before that.
+     * Shows each view's rectangle of the world in its rectangle of screen pixels, then runs the overlay in each view,
+     * scissored to it.
+     * The engine fills the whole screen because GraphicsLib's shaders assume it does.
+     * GraphicsLib ends its passes by binding framebuffer 0 itself, then reads the scene from there and draws its result there.
      */
     public void render(View[] views, int count, float[] clearRgb, Runnable worldOverlay) {
         requireSwapped();
 
-        // Neither the attribute stack nor the client stack covers the bound shader program.
         boolean shaders = GLContext.getCapabilities().OpenGL20;
         int previousProgram = shaders ? GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM) : 0;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
@@ -272,8 +244,6 @@ public final class EngineSandbox {
                     screenHeight * unitsPerPixelY);
             GL11.glClearColor(clearRgb[0], clearRgb[1], clearRgb[2], 1f);
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-            // GraphicsLib clears its buffers with whatever colour is set, and takes anything left in them for ripples
-            // and ship surfaces.
             GL11.glClearColor(0f, 0f, 0f, 0f);
             setShieldMipmaps(true);
             try {
@@ -304,11 +274,10 @@ public final class EngineSandbox {
         }
     }
 
-    /** Points the viewport and the projection at the world rectangle, drawn into that rectangle of pixels. */
+    /** Points the viewport and the projection at the world rectangle */
     private void aimCamera(int pixelX, int pixelY, int pixelWidth, int pixelHeight, float worldX, float worldY,
                            float worldWidth, float worldHeight) {
         CombatViewport viewport = engine.getViewport();
-        // set() derives viewMult from the screen width; pick ratios so viewMult = world units per target pixel.
         viewport.setWorldXtoScreenX(Global.getSettings().getScreenWidth() / pixelWidth);
         viewport.setWorldYtoScreenY(Global.getSettings().getScreenHeight() / pixelHeight);
         viewport.set(worldX, worldY, worldWidth, worldHeight);
@@ -328,7 +297,7 @@ public final class EngineSandbox {
         return (int) (Global.getSettings().getScreenHeightPixels() * Display.getPixelScaleFactor());
     }
 
-    /** Copies the screen into a texture, made here when {@code texture} is 0. Returns the texture. */
+    /** Copies the screen into a texture. */
     private static int copyScreen(int texture) {
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         int width = screenWidthPixels(), height = screenHeightPixels();
@@ -346,30 +315,22 @@ public final class EngineSandbox {
         return texture;
     }
 
-    /**
-     * Turns mipmapped filtering of the shield textures on or off. The mipmaps are rebuilt each time it is turned on, so
-     * a texture the game reloaded since is never drawn from stale or missing levels.
-     */
+    /** Turns mipmapped filtering of the shield textures on or off. */
     private static void setShieldMipmaps(boolean on) {
         ContextCapabilities caps = GLContext.getCapabilities();
-        if (!caps.OpenGL30 && !caps.GL_ARB_framebuffer_object && !caps.GL_EXT_framebuffer_object) return;
+        if (!caps.OpenGL30 && !caps.GL_ARB_framebuffer_object) return;
         for (String path : SHIELD_TEXTURES) {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, Global.getSettings().getSprite(path).getTextureId());
             if (on) {
                 if (caps.OpenGL30) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);
-                else if (caps.GL_ARB_framebuffer_object) ARBFramebufferObject.glGenerateMipmap(GL11.GL_TEXTURE_2D);
-                else EXTFramebufferObject.glGenerateMipmapEXT(GL11.GL_TEXTURE_2D);
+                else ARBFramebufferObject.glGenerateMipmap(GL11.GL_TEXTURE_2D);
             }
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
                     on ? GL11.GL_LINEAR_MIPMAP_LINEAR : GL11.GL_LINEAR);
         }
     }
 
-    /**
-     * Puts {@link #screenCopy} back, then draws each view's piece of the engine's render (whose lower left corner shows
-     * the world point (left, bottom)) in the view's rectangle. Also runs when the engine threw, which may have been
-     * inside one of GraphicsLib's framebuffers, where the game would go on to draw everything.
-     */
+    /** Puts screenCopy back, then draws each view's piece of the engine's render in its rectangle. */
     private void restoreScreen(View[] views, int count, float left, float bottom, float unitsPerPixelX,
                                float unitsPerPixelY) {
         ContextCapabilities caps = GLContext.getCapabilities();
@@ -377,8 +338,6 @@ public final class EngineSandbox {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
         } else if (caps.GL_ARB_framebuffer_object) {
             ARBFramebufferObject.glBindFramebuffer(ARBFramebufferObject.GL_FRAMEBUFFER, 0);
-        } else if (caps.GL_EXT_framebuffer_object) {
-            EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
         }
         resetFixedFunctionState();
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
@@ -394,7 +353,6 @@ public final class EngineSandbox {
         drawScreenTexture(screenCopy, 0, 0, screenWidth, screenHeight, 0, 0);
         for (int i = 0; i < count; i++) {
             View view = views[i];
-            // Rounded to whole pixels, so the piece is copied as is rather than blended across a pixel boundary.
             drawScreenTexture(sceneCopy, view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight,
                     Math.round((view.worldX - left) / unitsPerPixelX), Math.round((view.worldY - bottom) / unitsPerPixelY));
         }
@@ -402,7 +360,7 @@ public final class EngineSandbox {
         GL11.glEnable(GL11.GL_BLEND);
     }
 
-    /** Draws the (sourceX, sourceY, width, height) pixels of a screen-sized texture at (x, y), one to one. */
+    /** Draws the (sourceX, sourceY, width, height) pixels of a screen-sized texture at (x, y). */
     private static void drawScreenTexture(int texture, int x, int y, int width, int height, int sourceX, int sourceY) {
         float screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
         float minU = sourceX / screenWidth, maxU = (sourceX + width) / screenWidth;
@@ -420,11 +378,7 @@ public final class EngineSandbox {
         GL11.glEnd();
     }
 
-    /**
-     * The engine's renderers assume the game's baseline fixed-function state (no shader bound, texture unit 0,
-     * MODULATE, standard alpha blending, no stray buffers). Whatever the campaign UI left behind is overridden here;
-     * the caller's attribute pushes and program restore put it back afterwards.
-     */
+    /** Setting attributes for combat renderer. */
     private static void resetFixedFunctionState() {
         ContextCapabilities caps = GLContext.getCapabilities();
         if (caps.OpenGL20) GL20.glUseProgram(0);
@@ -441,15 +395,12 @@ public final class EngineSandbox {
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        for (int cap : new int[]{GL11.GL_DEPTH_TEST, GL11.GL_ALPHA_TEST, GL11.GL_LIGHTING, GL11.GL_CULL_FACE,
-                GL11.GL_STENCIL_TEST, GL11.GL_FOG, GL11.GL_COLOR_LOGIC_OP, GL11.GL_SCISSOR_TEST}) {
-            GL11.glDisable(cap);
-        }
+        for (int cap : CAPS_OFF) GL11.glDisable(cap);
         GL11.glColorMask(true, true, true, true);
         GL11.glColor4f(1f, 1f, 1f, 1f);
     }
 
-    /** Tears the private engine down; call while swapped out. */
+    /** Destroy the engine; call while swapped out. */
     public void destroy() {
         if (screenCopy != 0) {
             GL11.glDeleteTextures(screenCopy);
@@ -479,11 +430,12 @@ public final class EngineSandbox {
         if (!swapped || engine == null) throw new IllegalStateException("sandbox not swapped in");
     }
 
-    private void stripPlugins(Object map) {
-        for (EveryFrameCombatPlugin p : pluginsInMap(map)) {
+    /** The engine's plugins come from the combat map, so this runs once the map is set. */
+    private void stripPlugins() {
+        for (EveryFrameCombatPlugin p : engine.getPlugins()) {
             String name = p.getClass().getName();
             if (hasPrefix(name, STRIPPED_PLUGIN_PREFIXES)) {
-                api().removePlugin(p);
+                engine.removePlugin(p);
                 Log.info("removed combat plugin %s from the preview engine", name);
             }
         }
@@ -494,24 +446,6 @@ public final class EngineSandbox {
             if (name.startsWith(prefix)) return true;
         }
         return false;
-    }
-
-    /** Every-frame plugins live in the combat map as wrappers around the API plugin. */
-    private static List<EveryFrameCombatPlugin> pluginsInMap(Object map) {
-        List<EveryFrameCombatPlugin> out = new ArrayList<>();
-        for (Refl.ReflectedField field : Refl.fields(map.getClass())) {
-            if (field.isStatic || !List.class.isAssignableFrom(field.type)) continue;
-            Object list = field.get(map);
-            if (!(list instanceof List)) continue;
-            for (Object wrapper : (List<?>) list) {
-                if (wrapper == null) continue;
-                Refl.ReflectedField f = Refl.fieldOfType(wrapper.getClass(), EveryFrameCombatPlugin.class, false);
-                Object plugin = f != null ? f.get(wrapper) : null;
-                if (plugin instanceof EveryFrameCombatPlugin) out.add((EveryFrameCombatPlugin) plugin);
-            }
-            if (!out.isEmpty()) return out;
-        }
-        return out;
     }
 
     @SuppressWarnings("unchecked")
