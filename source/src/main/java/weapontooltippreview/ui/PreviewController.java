@@ -9,18 +9,14 @@ import org.dark.shaders.util.ShaderHook;
 import weapontooltippreview.Log;
 import weapontooltippreview.WeaponTooltipPreviewSettings;
 import weapontooltippreview.scenario.ThreatSelection;
-import weapontooltippreview.sim.SandboxHost;
+import weapontooltippreview.sim.EngineSandbox;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /**
- * Campaign driver
- * watches weapon tooltips
- * frees previews whose tooltip closed
- * handles the shared engine
- * handles key presses
+ * Campaign driver: watches weapon tooltips, manages the shared preview engine, and processes preview hotkeys.
  */
 public final class PreviewController implements EveryFrameScript, CampaignInputListener {
 
@@ -36,7 +32,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     /** New game session: forget per-session failures and start from a fresh engine. */
     public static void reset() {
         PreviewPanel.clearFailures();
-        SandboxHost.reset();
+        EngineSandbox.reset();
     }
 
     /** Builds the engine and runs a throwaway scene now, during the game load, rather than on the first hover. */
@@ -59,15 +55,14 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
         if (errors >= MAX_ERRORS) return;
         try {
             tooltips.tick();
-            tooltips.reapStale();
-            SandboxHost.tick();
+            EngineSandbox.tick();
         } catch (Throwable t) {
             errors++;
             if (loggedErrors.add(String.valueOf(t))) Log.error("tick failed (" + errors + "/" + MAX_ERRORS + ")", t);
             if (errors >= MAX_ERRORS) {
                 Log.error("preview disabled after " + errors + " errors");
                 tooltips.disposeAll();
-                SandboxHost.discard("controller disabled");
+                EngineSandbox.discard("controller disabled");
             }
         }
     }

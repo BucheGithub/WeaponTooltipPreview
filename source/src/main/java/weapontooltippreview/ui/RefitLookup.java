@@ -3,6 +3,7 @@ package weapontooltippreview.ui;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
 import com.fs.starfarer.api.fleet.FleetMemberAPI;
 import com.fs.starfarer.api.loading.WeaponSlotAPI;
+import com.fs.starfarer.api.ui.UIComponentAPI;
 import weapontooltippreview.Log;
 import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
@@ -10,7 +11,7 @@ import weapontooltippreview.scenario.RefitShip;
 
 /**
  * Finds the ship and slot behind a refit-screen weapon tooltip. The tooltip is attached to the slot button on the
- * ship display; climbing its parents reaches the refit panel, whose methods are not obfuscated.
+ * ship display; climbing its parents reaches the refit panel resolved in {@link StarfarerBridge}.
  */
 final class RefitLookup {
 
@@ -32,13 +33,13 @@ final class RefitLookup {
                 panel = node;
                 break;
             }
-            node = UiTree.parent(node);
+            node = node instanceof UIComponentAPI ? ((UIComponentAPI) node).getParent() : null;
         }
         if (panel == null) return null;
 
         Object member = StarfarerBridge.refitMember.invoke(panel);
         Object display = StarfarerBridge.refitShipDisplay.invoke(panel);
-        Object variant = display != null ? Refl.call(display, "getCurrentVariant") : null;
+        Object variant = display != null ? StarfarerBridge.refitCurrentVariant.invoke(display) : null;
         if (!(member instanceof FleetMemberAPI) || !(variant instanceof ShipVariantAPI)) return null;
 
         WeaponSlotAPI slot = slotOf(widget);
@@ -49,8 +50,8 @@ final class RefitLookup {
 
     /** A weapon slot's button is drawn by a renderer that holds the slot; other widgets have no such renderer. */
     private static WeaponSlotAPI slotOf(Object widget) {
-        Refl.ReflectedMethod getRenderer = Refl.method(widget.getClass(), "getRenderer");
-        Object renderer = getRenderer != null ? getRenderer.invoke(widget) : null;
+        if (widget == null || !StarfarerBridge.buttonGetRenderer.owner.isInstance(widget)) return null;
+        Object renderer = StarfarerBridge.buttonGetRenderer.invoke(widget);
         if (renderer == null) return null;
         Refl.ReflectedField slot = Refl.fieldOfType(renderer.getClass(), WeaponSlotAPI.class, false);
         return slot != null ? (WeaponSlotAPI) slot.get(renderer) : null;

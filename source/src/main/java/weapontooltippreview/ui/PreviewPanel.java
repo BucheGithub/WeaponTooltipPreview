@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The panel injected into a weapon or fighter LPC tooltip: steps the preview session in advance() and draws it in render(). 
+ * The panel injected into a weapon or fighter LPC tooltip: steps the preview session in advance() and draws it in render().
  */
 final class PreviewPanel implements CustomUIPanelPlugin {
 
@@ -35,7 +35,6 @@ final class PreviewPanel implements CustomUIPanelPlugin {
     /** The text sits in the box as in the game's hint: 4 below the top, 7 in from the left. */
     private static final float THREAT_HINT_PAD = 4f;
     private static final float THREAT_HINT_INDENT = 7f;
-    private static final long STALE_NANOS = 500_000_000L;
     private static final float BRACKET = 10f;
     /** Weapons and wings whose preview failed this game session. */
     private static final Set<PreviewSubject> FAILED = new HashSet<>();
@@ -53,7 +52,6 @@ final class PreviewPanel implements CustomUIPanelPlugin {
     private float hintHeight;
     private boolean failed;
     private boolean disposed;
-    private long lastAdvanceNanos;
 
     PreviewPanel(int tooltipId, PreviewSubject subject, RefitShip refit) {
         this.tooltipId = tooltipId;
@@ -113,7 +111,6 @@ final class PreviewPanel implements CustomUIPanelPlugin {
     @Override
     public void advance(float amount) {
         if (disposed || failed || pos == null) return;
-        lastAdvanceNanos = System.nanoTime();
         if (threatHint != null && threatHintVersion != ThreatSelection.version()) writeThreatHint();
         try {
             if (session == null) session = PreviewSession.start(subject, refit);
@@ -174,11 +171,6 @@ final class PreviewPanel implements CustomUIPanelPlugin {
 
     boolean isDisposed() {
         return disposed;
-    }
-
-    /** The tooltip stops advancing its children once hidden; that is the signal to free the engine. */
-    boolean isStale(long nowNanos) {
-        return lastAdvanceNanos != 0 && nowNanos - lastAdvanceNanos > STALE_NANOS;
     }
 
     /** An expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */

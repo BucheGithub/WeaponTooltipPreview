@@ -61,6 +61,16 @@ public final class EngineSandbox {
     private static final float SCENE_ORIGIN_X = -5000f;
     /** Several origins to cycle through on Y axis to let particles & vfx clear */
     private static final float[] SCENE_ORIGIN_Y = {0f, 5000f, -5000f, 10000f, -10000f};
+    private static final int MAX_SCENES = 40;
+    private static final long IDLE_NANOS = 60_000_000_000L;
+    /** Consecutive engine creation failures before previews are switched off for the rest of the game session. */
+    private static final int MAX_CREATE_FAILURES = 3;
+
+    private static EngineSandbox shared;
+    private static boolean inUse;
+    private static long idleSince;
+    private static int createFailures;
+    private static boolean disabled;
 
     private CombatEngine engine;
     private final Object input = Refl.newInstance(StarfarerBridge.inputClass);
@@ -80,8 +90,68 @@ public final class EngineSandbox {
     private EngineSandbox() {
     }
 
+    public static boolean isDisabled() {
+        return disabled;
+    }
+
+    /** The shared sandbox for a new preview, built or recycled as needed. Throws if no engine can be built. */
+    public static EngineSandbox acquire() {
+        if (disabled) throw new IllegalStateException("preview engine disabled");
+        if (shared != null && shared.scenes >= MAX_SCENES) discard("recycled after " + shared.scenes + " scenes");
+        if (shared == null) {
+            long t0 = System.nanoTime();
+            try {
+                shared = create();
+                createFailures = 0;
+            } catch (RuntimeException e) {
+                if (++createFailures >= MAX_CREATE_FAILURES) {
+                    disabled = true;
+                    Log.error("preview engine failed to start " + createFailures
+                            + " times in a row; previews disabled until the next game load");
+                }
+                throw e;
+            }
+            Log.info("sandbox created in %.1f ms; %s", (System.nanoTime() - t0) / 1e6, Log.heap());
+        }
+        inUse = true;
+        return shared;
+    }
+
+    /** The preview is done and the engine waits, idle, for the next one. */
+    public static void release() {
+        if (shared == null || !inUse) return;
+        inUse = false;
+        idleSince = System.nanoTime();
+    }
+
+    /** Destroys the shared engine (failure, idle, game load). The next preview builds a fresh one. */
+    public static void discard(String why) {
+        if (shared == null) return;
+        EngineSandbox s = shared;
+        shared = null;
+        inUse = false;
+        try {
+            s.destroy();
+        } catch (Throwable t) {
+            Log.error("sandbox destroy failed", t);
+        }
+        Log.info("sandbox discarded (%s) after %d scenes; %s", why, s.scenes, Log.heap());
+    }
+
+    /** Called every campaign frame: releases an engine nobody has used for a while. */
+    public static void tick() {
+        if (shared != null && !inUse && System.nanoTime() - idleSince > IDLE_NANOS) discard("idle");
+    }
+
+    /** New game session: drop the engine and give previews another chance if they had been switched off. */
+    public static void reset() {
+        discard("game load");
+        disabled = false;
+        createFailures = 0;
+    }
+
     /** Builds and initialises a private engine */
-    public static EngineSandbox create() {
+    private static EngineSandbox create() {
         EngineSandbox sandbox = new EngineSandbox();
         for (int i = 0; i < ANIMATION_GROUPS.length; i++) sandbox.ownAnimationManagers[i] = new AnimationManager();
         sandbox.swapIn();

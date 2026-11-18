@@ -45,8 +45,8 @@ final class WeaponHostFactory {
         final float slotAngle;
         /** True when the variant is a copy of the refit ship (its officer and fleet bonuses apply). */
         final boolean fromRefit;
-        /** The wing to deploy when the weapon host is a fighter; null for a ship. */
-        final String wingId;
+        /** The wing to deploy when the weapon host is a single fighter; null when the host is a ship. */
+        final String fighterWingId;
 
         WeaponHostPlan(ShipVariantAPI variant, WeaponSlotAPI slot, String source, boolean fromRefit) {
             this.variant = variant;
@@ -54,7 +54,7 @@ final class WeaponHostFactory {
             this.slotAngle = slot.getAngle();
             this.source = source;
             this.fromRefit = fromRefit;
-            this.wingId = null;
+            this.fighterWingId = null;
         }
 
         /** A carrier: no previewed weapon, facing toward the dummy. */
@@ -64,7 +64,7 @@ final class WeaponHostFactory {
             this.slotAngle = 0f;
             this.source = source;
             this.fromRefit = fromRefit;
-            this.wingId = null;
+            this.fighterWingId = null;
         }
 
         /** One of the wing's fighters, firing from one of its own slots. */
@@ -74,7 +74,7 @@ final class WeaponHostFactory {
             this.slotAngle = slot.getAngle();
             this.source = "fighter of " + wing.getId();
             this.fromRefit = false;
-            this.wingId = wing.getId();
+            this.fighterWingId = wing.getId();
         }
     }
 
@@ -94,14 +94,14 @@ final class WeaponHostFactory {
         }
         ShipAPI ship = deploy(engine, plan, refit, origin);
         WeaponAPI weapon = subject.weaponId != null ? weaponAt(ship, plan.slotId, subject.weaponId) : null;
-        if (plan.wingId != null) settleFighter(engine, ship, weapon, plan.slotAngle, origin);
+        if (plan.fighterWingId != null) settleFighter(engine, ship, weapon, plan.slotAngle, origin);
         return new WeaponHost(engine, ship, weapon, subject.weaponId == null ? wing : null, plan.source);
     }
 
     /** With the refit ship's officer, fleet (its skills apply) and CR when the plan copies it. */
     private static ShipAPI deploy(CombatEngineAPI engine, WeaponHostPlan plan, RefitShip refit, Vector2f origin) {
-        FleetMemberAPI member = plan.wingId != null
-                ? Global.getFactory().createFleetMember(FleetMemberType.FIGHTER_WING, plan.wingId)
+        FleetMemberAPI member = plan.fighterWingId != null
+                ? Global.getFactory().createFleetMember(FleetMemberType.FIGHTER_WING, plan.fighterWingId)
                 : Global.getFactory().createFleetMember(FleetMemberType.SHIP, plan.variant);
         float cr = Scenario.DEPLOY_CR;
         if (plan.fromRefit) {
@@ -171,7 +171,7 @@ final class WeaponHostFactory {
         WeaponSlotAPI slot = refit.slot != null ? variant.getSlot(refit.slot.getId()) : null;
         String how = "clicked";
         boolean builtIn = slot != null && isBuiltInAt(hull, slot, spec);
-        if (!builtIn && (slot == null || !fits(slot, spec))) {
+        if (!builtIn && (slot == null || !Scenario.fits(slot, spec))) {
             slot = bestSlot(hull, spec);
             how = "best fit";
         }
@@ -279,7 +279,7 @@ final class WeaponHostFactory {
     private static WeaponSlotAPI bestSlot(ShipHullSpecAPI hull, WeaponSpecAPI spec) {
         WeaponSlotAPI best = null;
         for (WeaponSlotAPI slot : hull.getAllWeaponSlotsCopy()) {
-            if (!fits(slot, spec)) continue;
+            if (!Scenario.fits(slot, spec)) continue;
             if (best == null || better(slot, best, spec)) best = slot;
         }
         return best;
@@ -294,13 +294,5 @@ final class WeaponHostFactory {
 
     private static boolean isBuiltInAt(ShipHullSpecAPI hull, WeaponSlotAPI slot, WeaponSpecAPI spec) {
         return spec.getWeaponId().equals(hull.getBuiltInWeapons().get(slot.getId()));
-    }
-
-    /** The game's own mounting rule (type compatibility, same size or one size up), minus non-weapon slots. */
-    static boolean fits(WeaponSlotAPI slot, WeaponSpecAPI spec) {
-        if (!slot.isWeaponSlot() || slot.isBuiltIn() || slot.isDecorative() || slot.isSystemSlot() || slot.isHidden()) {
-            return false;
-        }
-        return slot.weaponFits(spec);
     }
 }

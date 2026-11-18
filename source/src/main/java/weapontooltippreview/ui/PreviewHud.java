@@ -197,17 +197,24 @@ final class PreviewHud {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glBegin(GL11.GL_QUADS);
             for (int x = 0; x < gw; x++) {
                 for (int y = 0; y < gh; y++) {
                     float grow = Math.max(0f, reveal[x][y]);
+                    if (grow <= 0f) continue;
                     float side = cell * grow;
                     float f = MathUtils.clamp(grid.getArmorFraction(x, y), 0f, 1f);
-                    Color c = new Color((int) (f * 230f + 25f), (int) (f * 75f + 25f), 25,
-                            (int) (CELL_ALPHA * alpha * grow));
-                    Misc.renderQuad(x0 + x * cell + (cell - side) / 2f, y0 + y * cell + (cell - side) / 2f, side, side,
-                            c, 1f);
+                    GL11.glColor4ub((byte) (f * 230f + 25f), (byte) (f * 75f + 25f), (byte) 25,
+                            (byte) (CELL_ALPHA * alpha * grow));
+                    float cx = x0 + x * cell + (cell - side) / 2f;
+                    float cy = y0 + y * cell + (cell - side) / 2f;
+                    GL11.glVertex2f(cx, cy);
+                    GL11.glVertex2f(cx + side, cy);
+                    GL11.glVertex2f(cx + side, cy + side);
+                    GL11.glVertex2f(cx, cy + side);
                 }
             }
+            GL11.glEnd();
 
             if (spotlight != null) {
                 spotlight.setSize(size, size);
@@ -603,10 +610,10 @@ final class PreviewHud {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }
 
-    /** Frees the text strings' OpenGL resources; everything else goes with the hud, which its session drops. */
-    void dispose() {
-        for (LazyFont.DrawableString s : texts.values()) s.dispose();
-        texts.clear();
+    /** Releases the current target reference when a session ends while keeping sprites and text buffers warm. */
+    void clearTarget() {
+        schematicShip = null;
+        hullSprite = null;
     }
 
     /** Loads the readouts' font ahead of the first preview (see PreviewSession.prewarm). */

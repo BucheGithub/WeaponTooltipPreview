@@ -27,7 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -71,6 +70,7 @@ public final class TargetDummy {
     /** What the deployed dummy carries; null when it launches no missiles or no wing. */
     private List<String> missileLaunchers;
     private String wingId;
+    private int threatVersion;
     private List<WeaponAPI> launchers;
 
     /**
@@ -129,8 +129,7 @@ public final class TargetDummy {
 
     /** on player cycling keys. */
     boolean threatsChanged() {
-        return loadout == Loadout.THREATS && !(Objects.equals(missileLaunchers, ThreatSelection.missileLaunchers())
-                && Objects.equals(wingId, ThreatSelection.wingId()));
+        return loadout == Loadout.THREATS && threatVersion != ThreatSelection.version();
     }
 
     /**
@@ -183,6 +182,7 @@ public final class TargetDummy {
     }
 
     private void deploy() {
+        threatVersion = ThreatSelection.version();
         missileLaunchers = loadout == Loadout.THREATS ? ThreatSelection.missileLaunchers() : null;
         wingId = loadout == Loadout.THREATS ? ThreatSelection.wingId() : null;
         Map<String, String> launcherBySlot = forwardLaunchers();
@@ -209,7 +209,7 @@ public final class TargetDummy {
             if (!Misc.isInArc(slot.getAngle(), slot.getArc(), 0f)) continue;
             for (int i = missileLaunchers.size() - 1; i >= 0; i--) {
                 String launcherId = missileLaunchers.get(i);
-                if (WeaponHostFactory.fits(slot, Global.getSettings().getWeaponSpec(launcherId))) {
+                if (Scenario.fits(slot, Global.getSettings().getWeaponSpec(launcherId))) {
                     launcherBySlot.put(slot.getId(), launcherId);
                     break;
                 }
@@ -242,7 +242,7 @@ public final class TargetDummy {
         group.setAutofireOnByDefault(true);
         for (WeaponSlotAPI slot : variant.getHullSpec().getAllWeaponSlotsCopy()) {
             for (String weaponId : POINT_DEFENSE_WEAPONS) {
-                if (WeaponHostFactory.fits(slot, Global.getSettings().getWeaponSpec(weaponId))) {
+                if (Scenario.fits(slot, Global.getSettings().getWeaponSpec(weaponId))) {
                     loaded.addWeapon(slot.getId(), weaponId);
                     group.addSlot(slot.getId());
                     break;

@@ -1,7 +1,6 @@
 package weapontooltippreview;
 
 import lunalib.lunaSettings.LunaSettings;
-import lunalib.lunaSettings.LunaSettingsListener;
 import org.lwjgl.input.Keyboard;
 
 import java.util.Locale;
@@ -69,7 +68,9 @@ public final class WeaponTooltipPreviewSettings {
 
     public static void load() {
         if (!listening) {
-            LunaSettings.addSettingsListener(new Listener());
+            LunaSettings.addSettingsListener(modID -> {
+                if (MOD_ID.equals(modID)) read();
+            });
             listening = true;
         }
         read();
@@ -101,12 +102,5 @@ public final class WeaponTooltipPreviewSettings {
     private static int keySetting(String fieldId, int defaultKey) {
         Integer key = LunaSettings.getInt(MOD_ID, fieldId);
         return key != null ? key : defaultKey;
-    }
-
-    private static final class Listener implements LunaSettingsListener {
-        @Override
-        public void settingsChanged(String modID) {
-            if (MOD_ID.equals(modID)) read();
-        }
     }
 }

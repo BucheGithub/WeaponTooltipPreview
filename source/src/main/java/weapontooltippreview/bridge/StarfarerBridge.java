@@ -1,18 +1,17 @@
 package weapontooltippreview.bridge;
 
-import com.fs.graphics.anim.AnimationManager;
 import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatState;
 import com.fs.starfarer.combat.systems.WeaponGroup;
+import com.fs.starfarer.coreui.refit.WeaponPickerDialog;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
+import com.fs.graphics.anim.AnimationManager;
 import weapontooltippreview.Log;
 
 /**
- * What the mod needs from the game's core and cannot call directly, resolved once at application load. 
- * Compatibility security : a required entry missing disables the mod and leaves vanilla tooltips.
- * Each platform's build is obfuscated separately, sometimes the Windows and macOS jars give the same member different names.
- * TODO Windows: the 0.98.5a names (map bounds, arc select, refit panel) were only checked against the macOS
- * starfarer_obf.jar. Check them against the Windows one.
+ * What the mod needs from the game's core and cannot call directly, resolved once at application load.
+ * Compatibility security: a required entry missing disables the mod and leaves vanilla tooltips.
+ * Each platform's build is obfuscated separately; where possible members are matched by signature rather than name.
  */
 public final class StarfarerBridge {
 
@@ -29,6 +28,8 @@ public final class StarfarerBridge {
     public static Class<?> inputClass;
     public static Refl.ReflectedField animManagers;
     public static Refl.ReflectedMethod tooltipContents;
+    public static Refl.ReflectedField tooltipExpanded;
+    public static Refl.ReflectedField tooltipExpandLabel;
 
     // optional: the game's weapon arc, failure = no arc drawn
     public static Class<?> arcRendererClass;
@@ -41,6 +42,8 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod tooltipWidget;
     public static Refl.ReflectedMethod refitMember;
     public static Refl.ReflectedMethod refitShipDisplay;
+    public static Refl.ReflectedMethod refitCurrentVariant;
+    public static Refl.ReflectedMethod buttonGetRenderer;
 
     private static boolean ready;
 
@@ -61,10 +64,12 @@ public final class StarfarerBridge {
             engineAdvance = method(CombatEngine.class, "advance", float.class, ANY);
             mapClass = engineSetCombatMap.parameterTypes[0];
             inputClass = engineAdvance.parameterTypes[1];
-            mapSetBounds = method(mapClass, new String[]{"super", "o00000"}, float.class, float.class, float.class, float.class);
+            mapSetBounds = method(mapClass, (String) null, float.class, float.class, float.class, float.class);
             animManagers = field(AnimationManager.class, "managers");
-            // The panel a tooltip builds its content in. Its return type is obfuscated, so no direct call.
+            // Return types are obfuscated per platform, so invoke via reflection.
             tooltipContents = method(StandardTooltipV2.class, "getContents");
+            tooltipExpanded = field(StandardTooltipV2.class, "expanded");
+            tooltipExpandLabel = field(StandardTooltipV2.class, "expandLabel");
             ready = true;
             Log.info("bridge: all required entries resolved");
         } catch (Throwable t) {
@@ -75,7 +80,7 @@ public final class StarfarerBridge {
             Class<?> renderer = field(CombatState.class, "arcRenderer").type;
             // 0.98.5a has a second (WeaponGroup) setter, o00000, that skips the fade; CombatState only calls new
             arcSelectGroup = method(renderer, new String[]{"Ò00000", "new"}, WeaponGroup.class);
-            arcAdvance = method(renderer, new String[]{"super", "o00000"}, float.class);
+            arcAdvance = method(renderer, (String) null, float.class);
             arcRender = method(renderer, new String[]{"String", "Ô00000"});
             arcRendererClass = renderer;
         } catch (Throwable t) {
@@ -83,26 +88,27 @@ public final class StarfarerBridge {
         }
 
         try {
-            Class<?> panel = classNamed("com.fs.starfarer.coreui.refit.U", "com.fs.starfarer.coreui.refit.Objectsuper");
+            Class<?> panel = findRefitPanelClass();
             tooltipWidget = method(StandardTooltipV2.class, "getWidgetAttachedTo");
             refitMember = method(panel, "getMember");
             refitShipDisplay = method(panel, "getShipDisplay");
+            refitCurrentVariant = method(refitShipDisplay.returnType, "getCurrentVariant");
+            buttonGetRenderer = method(method(WeaponPickerDialog.class, "getSlotButton").returnType, "getRenderer");
             refitPanelClass = panel;
         } catch (Throwable t) {
             Log.error("bridge: the refit panel is missing; previews use a generic ship", t);
         }
     }
 
-    /** The first of these classes that exists. */
-    private static Class<?> classNamed(String... names) {
-        for (String name : names) {
-            try {
-                return Refl.classForName(name);
-            } catch (RuntimeException absent) {
-                // try the next name
+    /** Finds the obfuscated refit panel class from WeaponPickerDialog's fields by its unobfuscated methods. */
+    private static Class<?> findRefitPanelClass() {
+        for (Refl.ReflectedField f : Refl.fields(WeaponPickerDialog.class)) {
+            if (!f.isStatic && Refl.method(f.type, "getMember") != null
+                    && Refl.method(f.type, "getShipDisplay") != null) {
+                return f.type;
             }
         }
-        throw new IllegalStateException("no class " + String.join("|", names));
+        throw new IllegalStateException("no refit panel field on WeaponPickerDialog");
     }
 
     private static Refl.ReflectedField field(Class<?> owner, String name) {

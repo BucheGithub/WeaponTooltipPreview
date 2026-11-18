@@ -1,5 +1,6 @@
 package weapontooltippreview.ui;
 
+import com.fs.starfarer.api.GameState;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CoreUITabId;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
@@ -20,11 +21,11 @@ import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.scenario.PreviewSubject;
 import weapontooltippreview.scenario.RefitShip;
 import weapontooltippreview.scenario.ThreatSelection;
-import weapontooltippreview.sim.SandboxHost;
+import weapontooltippreview.sim.EngineSandbox;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -65,59 +66,56 @@ final class TooltipWatcher {
     }
 
     private final Map<UIComponentAPI, TipState> states = new WeakHashMap<>();
-    /** Strong references so engines are always released, even if the tooltip itself is collected first. */
-    private final List<PreviewPanel> livePreviews = new ArrayList<>();
-    private final Map<UIComponentAPI, Boolean> found = new IdentityHashMap<>();
+    private final List<StandardTooltipV2> found = new ArrayList<>();
+    /** Strong reference to the running preview so the engine is always released even if the tooltip is collected. */
+    private PreviewPanel activePreview;
     private int nextId = 1;
 
     void tick() {
         found.clear();
-        UIPanelAPI screen = UiTree.screenPanel();
-        if (screen != null && !UiTree.isCodexShowing()) scan(screen, 0);
-        for (UIComponentAPI tip : found.keySet()) handle(tip);
+        if (Global.getCurrentState() == GameState.CAMPAIGN && !Global.getSettings().isShowingCodex()) {
+            UIPanelAPI screen = Global.getSettings().getScreenPanel();
+            if (screen != null) scan(screen, 0);
+        }
+        boolean activeStillVisible = false;
+        for (StandardTooltipV2 tip : found) {
+            TipState s = handle(tip);
+            if (s.visible && s.preview != null && s.preview == activePreview) activeStillVisible = true;
+        }
         for (Map.Entry<UIComponentAPI, TipState> e : states.entrySet()) {
             TipState s = e.getValue();
-            if (s.visible && !found.containsKey(e.getKey())) {
+            if (s.visible && !found.contains(e.getKey())) {
                 s.visible = false;
                 disposePreview(s);
             }
         }
-    }
-
-    /** Frees previews whose panel stopped being advanced (tooltip hidden by a path we did not observe). */
-    void reapStale() {
-        long now = System.nanoTime();
-        for (int i = livePreviews.size() - 1; i >= 0; i--) {
-            PreviewPanel p = livePreviews.get(i);
-            if (!p.isDisposed() && p.isStale(now)) {
-                Log.info("reaping stale preview");
-                p.dispose();
-            }
-            if (p.isDisposed()) livePreviews.remove(i);
+        if (activePreview != null && !activeStillVisible) {
+            disposeActive();
         }
     }
 
     boolean isShowingPreview() {
-        for (PreviewPanel p : livePreviews) {
-            if (!p.isDisposed()) return true;
-        }
-        return false;
+        return activePreview != null && !activePreview.isDisposed();
     }
 
     boolean isShowingThreatHint() {
-        for (PreviewPanel p : livePreviews) {
-            if (!p.isDisposed() && p.showsThreatHint()) return true;
-        }
-        return false;
+        return activePreview != null && !activePreview.isDisposed() && activePreview.showsThreatHint();
     }
 
     void disposeAll() {
-        for (PreviewPanel p : livePreviews) p.dispose();
-        livePreviews.clear();
+        disposeActive();
+    }
+
+    private void disposeActive() {
+        if (activePreview != null) {
+            activePreview.dispose();
+            activePreview = null;
+        }
     }
 
     private void disposePreview(TipState s) {
         if (s.preview != null) {
+            if (s.preview == activePreview) activePreview = null;
             s.preview.dispose();
             s.preview = null;
         }
@@ -125,26 +123,27 @@ final class TooltipWatcher {
 
     private void scan(Object node, int depth) {
         if (node instanceof StandardTooltipV2) {
-            found.put((StandardTooltipV2) node, Boolean.TRUE);
+            StandardTooltipV2 tip = (StandardTooltipV2) node;
+            if (!found.contains(tip)) found.add(tip);
             return;
         }
         if (depth >= SCAN_DEPTH) return;
-        for (Object c : UiTree.children(node)) scan(c, depth + 1);
+        for (Object c : children(node)) scan(c, depth + 1);
     }
 
-    private void handle(UIComponentAPI tip) {
+    private TipState handle(StandardTooltipV2 tip) {
         TipState s = states.get(tip);
         if (s == null) {
             s = new TipState(nextId++, subjectOf(tip));
             states.put(tip, s);
         }
 
-        boolean visibleNow = UiTree.visibility((StandardTooltipV2) tip) > 0.01f;
+        boolean visibleNow = tip.getOpacity() * tip.getFader().getBrightness() > 0.01f;
         if (visibleNow != s.visible) {
             s.visible = visibleNow;
             if (!visibleNow) disposePreview(s);
         }
-        if (s.subject == null || !visibleNow) return;
+        if (s.subject == null || !visibleNow) return s;
 
         if (s.pageField != null) {
             int page = (Integer) s.pageField.get(tip);
@@ -152,16 +151,17 @@ final class TooltipWatcher {
         }
 
         CustomPanelAPI panel = s.injected != null ? s.injected.get() : null;
-        if (panel == null || !UiTree.isDescendant(tip, panel, 6)) {
+        if (panel == null || !isDescendant(tip, panel, 6)) {
             if (s.injected != null) Log.info("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
-            if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
+            if (EngineSandbox.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
                 enforcePlacement(tip, s);
-                return;
+                return s;
             }
-            inject(tip, s, null, UiTree.top(tip));
+            inject(tip, s, null, top(tip));
         } else {
             enforcePlacement(tip, s);
         }
+        return s;
     }
 
     /**
@@ -174,13 +174,13 @@ final class TooltipWatcher {
     private void turnPage(UIComponentAPI tip, TipState s, int page) {
         CustomPanelAPI running = s.injected != null ? s.injected.get() : null;
         PreviewSubject previous = s.subject;
-        float top = UiTree.top(tip);
+        float top = top(tip);
         rebuildOnce((StandardTooltipV2Expandable) tip);
         s.page = page;
         s.subject = subjectOf(tip);
         s.injected = null;
         Log.info("tooltip #%d turned to page %d: %s", s.id, page, s.subject);
-        if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
+        if (EngineSandbox.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
             disposePreview(s);
             placeOnScreen(tip, s, top, hintOverhang(tip));
             return;
@@ -191,7 +191,7 @@ final class TooltipWatcher {
 
     /** create() only resizes and places the tooltip for its new content with the flag on. */
     private static void rebuildOnce(StandardTooltipV2Expandable tip) {
-        boolean expanded = (Boolean) Refl.fieldNamed(tip.getClass(), "expanded").get(tip);
+        boolean expanded = Boolean.TRUE.equals(StarfarerBridge.tooltipExpanded.get(tip));
         tip.setRecreateEveryFrame(true);
         try {
             tip.create(expanded);
@@ -255,13 +255,13 @@ final class TooltipWatcher {
         PositionAPI pp = parent.getPosition();
         float parentLeft = pp.getX();
         float parentTop = pp.getY() + pp.getHeight();
-        float anchorTop = UiTree.top(data);
+        float anchorTop = top(data);
         float x0 = data.getPosition().getX() - parentLeft;
         float width = Math.max(100f, pp.getWidth() - 2f * x0);
         CustomPanelAPI panel = running != null ? running : newPreview(tip, s, width);
         float shift = panel.getPosition().getHeight() + GAP;
 
-        for (Object c : UiTree.children(parent)) {
+        for (Object c : children(parent)) {
             if (!(c instanceof UIComponentAPI)) continue;
             PositionAPI cp = ((UIComponentAPI) c).getPosition();
             float cTop = cp.getY() + cp.getHeight();
@@ -289,12 +289,12 @@ final class TooltipWatcher {
 
     private CustomPanelAPI newPreview(Object tip, TipState s, float width) {
         // One live engine at a time: any other preview belongs to a tooltip that is gone or going.
-        disposeAll();
+        disposeActive();
         RefitShip refit = Global.getSector().getCampaignUI().getCurrentCoreTab() == CoreUITabId.REFIT
                 ? RefitLookup.find(tip) : null;
         PreviewPanel preview = new PreviewPanel(s.id, s.subject, refit);
         s.preview = preview;
-        livePreviews.add(preview);
+        activePreview = preview;
         boolean threatHint = ThreatSelection.appliesTo(s.subject);
         CustomPanelAPI panel = Global.getSettings().createCustom(width,
                 PREVIEW_HEIGHT + (threatHint ? PreviewPanel.THREAT_HINT_HEIGHT : 0f), preview);
@@ -312,9 +312,8 @@ final class TooltipWatcher {
      * content, outside the height the frame reports, so it is measured here, before the preview moves anything.
      */
     private static float hintOverhang(UIComponentAPI tip) {
-        Refl.ReflectedField f = Refl.fieldNamed(tip.getClass(), "expandLabel");
-        Object label = f != null ? f.get(tip) : null;
-        if (!(label instanceof UIComponentAPI) || !UiTree.children(tip).contains(label)) return 0f;
+        Object label = StarfarerBridge.tooltipExpandLabel.get(tip);
+        if (!(label instanceof UIComponentAPI) || !children(tip).contains(label)) return 0f;
         PositionAPI lp = ((UIComponentAPI) label).getPosition();
         return Math.max(tip.getPosition().getY() - lp.getY(), lp.getHeight());
     }
@@ -363,19 +362,34 @@ final class TooltipWatcher {
 
     private static void applyBottom(UIComponentAPI tip, float bottom) {
         PositionAPI tp = tip.getPosition();
-        Object parent = UiTree.parent(tip);
-        float px = 0f, py = 0f;
-        if (parent instanceof UIComponentAPI) {
-            px = ((UIComponentAPI) parent).getPosition().getX();
-            py = ((UIComponentAPI) parent).getPosition().getY();
-        }
+        UIPanelAPI parent = tip.getParent();
+        float px = parent != null ? parent.getPosition().getX() : 0f;
+        float py = parent != null ? parent.getPosition().getY() : 0f;
         tp.inBL(tp.getX() - px, bottom - py);
     }
 
     private static UIComponentAPI firstNonLabel(UIPanelAPI contents) {
-        for (Object c : UiTree.children(contents)) {
+        for (Object c : children(contents)) {
             if (c instanceof UIComponentAPI && !(c instanceof LabelAPI)) return (UIComponentAPI) c;
         }
         return null;
+    }
+
+    private static List<UIComponentAPI> children(Object node) {
+        return node instanceof UIPanelAPI ? ((UIPanelAPI) node).getChildrenCopy2() : Collections.<UIComponentAPI>emptyList();
+    }
+
+    private static boolean isDescendant(Object ancestor, Object node, int maxDepth) {
+        if (ancestor == node) return true;
+        if (maxDepth <= 0) return false;
+        for (Object c : children(ancestor)) {
+            if (isDescendant(c, node, maxDepth - 1)) return true;
+        }
+        return false;
+    }
+
+    private static float top(UIComponentAPI c) {
+        PositionAPI p = c.getPosition();
+        return p.getY() + p.getHeight();
     }
 }

@@ -17,7 +17,6 @@ import weapontooltippreview.scenario.Scenario;
 import weapontooltippreview.scenario.WeaponHost;
 import weapontooltippreview.sim.CombatArcRenderer;
 import weapontooltippreview.sim.EngineSandbox;
-import weapontooltippreview.sim.SandboxHost;
 
 import java.awt.Color;
 
@@ -46,6 +45,8 @@ final class PreviewSession {
     private static final int PREWARM_STEPS = 10;
     /** About a tooltip's preview, at the bottom left of the screen; the engine's render puts the screen back. */
     private static final float PREWARM_WIDTH = 400f, PREWARM_HEIGHT = 150f;
+    /** Shared HUD renderer: keeps sprites, wing icons and text buffers warm across hovers. */
+    private static final PreviewHud HUD = new PreviewHud();
 
     private static final class Pane extends EngineSandbox.View {
         float uiX, uiY, uiW, uiH;
@@ -65,8 +66,6 @@ final class PreviewSession {
     private boolean arcUnavailable = !CombatArcRenderer.isAvailable();
     /** The dummy the arc renderer was made for. */
     private ShipAPI arcTarget;
-    /** Hull, flux and armor of the dummy; ammo and reload of the weapon, or the carrier's wings. */
-    private final PreviewHud hud = new PreviewHud();
     private long frames;
     private long renders;
     private double simMs, renderMs;
@@ -83,7 +82,7 @@ final class PreviewSession {
     static PreviewSession start(PreviewSubject subject, RefitShip refit) {
         long t0 = System.nanoTime();
         PreviewSession session = new PreviewSession(subject);
-        EngineSandbox sandbox = SandboxHost.acquire(session);
+        EngineSandbox sandbox = EngineSandbox.acquire();
         session.sandbox = sandbox;
         try {
             sandbox.swapIn();
@@ -94,10 +93,10 @@ final class PreviewSession {
                 sandbox.swapOut();
             }
         } catch (NoPreviewException e) {
-            SandboxHost.release(session);
+            EngineSandbox.release();
             throw e;
         } catch (RuntimeException | Error e) {
-            SandboxHost.discard("scene setup failed for " + subject);
+            EngineSandbox.discard("scene setup failed for " + subject);
             throw e;
         }
         Log.info("session for %s started in %.1f ms (scene %d of this engine)", subject, (System.nanoTime() - t0) / 1e6,
@@ -226,16 +225,16 @@ final class PreviewSession {
             Pane weaponHostPane = panes[0];
             WeaponHost weaponHost = scenario.weaponHost();
             if (weaponHost.weapon() != null) {
-                hud.drawWeapon(weaponHost.weapon(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+                HUD.drawWeapon(weaponHost.weapon(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
                         weaponHostPane.uiH, alpha);
             } else {
-                hud.drawWings(weaponHost.ship(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+                HUD.drawWings(weaponHost.ship(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
                         weaponHostPane.uiH, alpha);
             }
             ShipAPI target = scenario.targetDummy().ship();
             if (target.isAlive()) {
                 Pane p = panes[paneCount - 1];
-                hud.drawTarget(target, p.uiX, p.uiY, p.uiW, p.uiH, alpha);
+                HUD.drawTarget(target, p.uiX, p.uiY, p.uiW, p.uiH, alpha);
             }
         } finally {
             GL11.glPopAttrib();
@@ -246,9 +245,9 @@ final class PreviewSession {
     void dispose(boolean failed) {
         if (disposed) return;
         disposed = true;
-        hud.dispose();
-        if (failed) SandboxHost.discard("preview of " + subject + " failed");
-        else SandboxHost.release(this);
+        HUD.clearTarget();
+        if (failed) EngineSandbox.discard("preview of " + subject + " failed");
+        else EngineSandbox.release();
         Log.info("session for %s ended after %d frames (avg sim %.2f ms, render %.2f ms); %s", subject, frames,
                 frames > 0 ? simMs / frames : 0, renders > 0 ? renderMs / renders : 0, Log.heap());
     }

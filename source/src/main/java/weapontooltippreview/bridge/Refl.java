@@ -15,7 +15,7 @@ import java.util.Map;
  * the name of every class it is asked to load. In 0.98a it refuses anything under java.reflect.
  *
  * Credits:
- * This mimics the workaround in LunaLib's ReflectionUtils}, made by Lukas04 and improved with help from Starficz.
+ * This mimics the workaround in LunaLib's ReflectionUtils
  */
 public final class Refl {
 
@@ -42,6 +42,8 @@ public final class Refl {
             virtualHandle(FIELD_CLASS, "set", void.class, Object.class, Object.class);
 
     private static final MethodHandle METHOD_GET_NAME = virtualHandle(METHOD_CLASS, "getName", String.class);
+    private static final MethodHandle METHOD_GET_RETURN_TYPE =
+            virtualHandle(METHOD_CLASS, "getReturnType", Class.class);
     private static final MethodHandle METHOD_GET_PARAMETER_TYPES =
             virtualHandle(METHOD_CLASS, "getParameterTypes", Class[].class);
     private static final MethodHandle METHOD_SET_ACCESSIBLE =
@@ -105,6 +107,7 @@ public final class Refl {
     public static final class ReflectedMethod {
         private final Object method;
         public final String name;
+        public final Class<?> returnType;
         public final Class<?>[] parameterTypes;
         public final Class<?> owner;
 
@@ -112,6 +115,7 @@ public final class Refl {
             this.method = method;
             this.owner = owner;
             this.name = (String) METHOD_GET_NAME.invoke(method);
+            this.returnType = (Class<?>) METHOD_GET_RETURN_TYPE.invoke(method);
             this.parameterTypes = (Class<?>[]) METHOD_GET_PARAMETER_TYPES.invoke(method);
             trySetAccessible(METHOD_SET_ACCESSIBLE, method);
         }
@@ -133,15 +137,6 @@ public final class Refl {
     /**
     * Lookup
     */
-    
-    /** Finds a class through this mod's own classloader, without initializing it. */
-    public static Class<?> classForName(String name) {
-        try {
-            return Class.forName(name, false, Refl.class.getClassLoader());
-        } catch (Throwable failure) {
-            throw wrapFailure("class " + name, failure);
-        }
-    }
 
     /** Declared fields of the class and all its superclasses, subclass first. */
     public static List<ReflectedField> fields(Class<?> targetClass) {
@@ -171,19 +166,17 @@ public final class Refl {
         return null;
     }
 
-    /** First method with this name whose parameter types exactly match {@code parameterTypes}. */
+    /**
+     * First method with this name (or any name when {@code name} is null) whose parameter types exactly match
+     * {@code parameterTypes}.
+     */
     public static ReflectedMethod method(Class<?> targetClass, String name, Class<?>... parameterTypes) {
         for (ReflectedMethod method : methods(targetClass)) {
-            if (method.name.equals(name) && sameParameterTypes(method.parameterTypes, parameterTypes)) return method;
+            if ((name == null || method.name.equals(name)) && sameParameterTypes(method.parameterTypes, parameterTypes)) {
+                return method;
+            }
         }
         return null;
-    }
-
-    /** Invokes a no-argument method by name. */
-    public static Object call(Object instance, String name) {
-        ReflectedMethod method = method(instance.getClass(), name);
-        if (method == null) throw new IllegalStateException("no method " + name + " on " + instance.getClass().getName());
-        return method.invoke(instance);
     }
 
     /** Creates an instance through the no-argument constructor, private or not. */
