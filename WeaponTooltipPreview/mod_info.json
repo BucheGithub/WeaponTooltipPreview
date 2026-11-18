@@ -3,9 +3,9 @@
   "name": "Weapon Tooltip Preview",
   "author": "Buche",
   "utility": "true",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Adds a weapon preview within weapon tooltips by creating a small live battlefield instance on the fly",
-  "gameVersion": "0.98a-RC8",
+  "gameVersion": "0.98.5a",
   "jars": ["jars/WeaponTooltipPreview.jar"],
   "modPlugin": "weapontooltippreview.WeaponTooltipPreviewModPlugin",
   "dependencies": [
