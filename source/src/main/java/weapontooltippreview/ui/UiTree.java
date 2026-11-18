@@ -1,12 +1,11 @@
 package weapontooltippreview.ui;
 
+import com.fs.starfarer.api.GameState;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.ui.PositionAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
 import com.fs.starfarer.api.ui.UIPanelAPI;
-import com.fs.starfarer.campaign.CampaignState;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
-import com.fs.state.AppDriver;
 
 import java.util.Collections;
 import java.util.List;
@@ -17,19 +16,14 @@ final class UiTree {
     private UiTree() {
     }
 
-    static Object currentAppState() {
-        return AppDriver.getInstance().getCurrentState();
-    }
-
     /** The campaign screen panel weapon tooltips are attached to; null outside the campaign. */
-    static UIPanelAPI screenPanel(Object state) {
-        if (!(state instanceof CampaignState)) return null;
-        return Global.getSettings().getScreenPanel();
+    static UIPanelAPI screenPanel() {
+        return Global.getCurrentState() == GameState.CAMPAIGN ? Global.getSettings().getScreenPanel() : null;
     }
 
-    /** True while the campaign Codex is open; previews stay out of it. */
-    static boolean isCodexShowing(Object state) {
-        return state instanceof CampaignState && ((CampaignState) state).isShowingCodex();
+    /** True while the Codex is open; previews stay out of it. */
+    static boolean isCodexShowing() {
+        return Global.getSettings().isShowingCodex();
     }
 
     /** A copy of the panel's child list, so the tree may change while it is iterated; empty for non-panels. */

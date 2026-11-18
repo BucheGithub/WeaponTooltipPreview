@@ -19,7 +19,7 @@ import java.util.Set;
  * Campaign driver
  * watches weapon tooltips
  * frees previews whose tooltip closed
- * handles the shared engine and sound
+ * handles the shared engine
  * handles key presses
  */
 public final class PreviewController implements EveryFrameScript, CampaignInputListener {
@@ -37,6 +37,11 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     public static void reset() {
         PreviewPanel.clearFailures();
         SandboxHost.reset();
+    }
+
+    /** Builds the engine and runs a throwaway scene now, during the game load, rather than on the first hover. */
+    public static void prewarm() {
+        PreviewSession.prewarm();
     }
 
     @Override

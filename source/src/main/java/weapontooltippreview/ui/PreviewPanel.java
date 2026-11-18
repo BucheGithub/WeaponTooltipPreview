@@ -24,9 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The panel injected into a weapon or fighter LPC tooltip: steps the preview session in advance() and draws it in
- * render(). A failure ends the session, shows "Preview unavailable" and leaves that weapon's or wing's tooltips vanilla
- * from then on. Point defense previews add the threat keys on a line under the scene.
+ * The panel injected into a weapon or fighter LPC tooltip: steps the preview session in advance() and draws it in render(). 
  */
 final class PreviewPanel implements CustomUIPanelPlugin {
 
@@ -77,10 +75,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         line.setOpacity(0f);
     }
 
-    /**
-     * The threat keys on one line at the bottom of {@code panel}, which has {@link #THREAT_HINT_HEIGHT} of room under
-     * the scene. In the font of the game's own F1/F2 hint.
-     */
+    /** The threat keys on one line at the bottom of the panel. */
     void addThreatHint(CustomPanelAPI panel) {
         hintHeight = THREAT_HINT_HEIGHT;
         TooltipMakerAPI element = panel.createUIElement(panel.getPosition().getWidth() - THREAT_HINT_INDENT,
@@ -95,10 +90,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         return threatHint != null && !failed;
     }
 
-    /**
-     * Side by side and in the colours of the F1/F2 hint: each key and what it picked, darker where the mode leaves it
-     * out.
-     */
+    /** Side by side and in the colours of the F1/F2 hint */
     private void writeThreatHint() {
         ThreatSelection.Mode mode = ThreatSelection.mode();
         Color key = Misc.getHighlightColor(), active = Misc.getGrayColor(), inactive = active.darker();
@@ -189,7 +181,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         return lastAdvanceNanos != 0 && nowNanos - lastAdvanceNanos > STALE_NANOS;
     }
 
-    /** {@code t == null}: an expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */
+    /** An expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */
     private void fail(String what, Throwable t) {
         failed = true;
         FAILED.add(subject);
@@ -211,7 +203,7 @@ final class PreviewPanel implements CustomUIPanelPlugin {
         }
     }
 
-    /** Corner brackets in the style of the mockup. */
+    /** Corner brackets */
     private static void drawBrackets(float x, float y, float w, float h, float alpha) {
         GL11.glLineWidth(1f);
         GL11.glColor4f(0.35f, 0.75f, 0.85f, 0.9f * alpha);

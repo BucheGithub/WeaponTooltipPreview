@@ -41,6 +41,11 @@ final class PreviewSession {
     private static final float STRIP_UI = 16f;
     private static final int MAX_BLIPS = 64;
     private static final int LOG_EVERY_FRAMES = 300;
+    /** The throwaway scene of prewarm(): a stock weapon, on a generic host, against the player's dummy. */
+    private static final String PREWARM_WEAPON_ID = "lightac";
+    private static final int PREWARM_STEPS = 10;
+    /** About a tooltip's preview, at the bottom left of the screen; the engine's render puts the screen back. */
+    private static final float PREWARM_WIDTH = 400f, PREWARM_HEIGHT = 150f;
 
     private static final class Pane extends EngineSandbox.View {
         float uiX, uiY, uiW, uiH;
@@ -80,27 +85,48 @@ final class PreviewSession {
         PreviewSession session = new PreviewSession(subject);
         EngineSandbox sandbox = SandboxHost.acquire(session);
         session.sandbox = sandbox;
-        boolean ok = false;
-        boolean expected = false;
-        sandbox.swapIn();
         try {
-            session.scenario = Scenario.spawn(sandbox.api(), subject, refit, sandbox.beginScene());
-            session.rearmArcRenderer();
-            ok = true;
-        } catch (NoPreviewException e) {
-            expected = true;
-            throw e;
-        } finally {
-            sandbox.swapOut();
-            if (!ok) {
-                session.disposed = true;
-                if (expected) SandboxHost.release(session);
-                else SandboxHost.discard("scene setup failed for " + subject);
+            sandbox.swapIn();
+            try {
+                session.scenario = Scenario.spawn(sandbox.api(), subject, refit, sandbox.beginScene());
+                session.rearmArcRenderer();
+            } finally {
+                sandbox.swapOut();
             }
+        } catch (NoPreviewException e) {
+            SandboxHost.release(session);
+            throw e;
+        } catch (RuntimeException | Error e) {
+            SandboxHost.discard("scene setup failed for " + subject);
+            throw e;
         }
         Log.info("session for %s started in %.1f ms (scene %d of this engine)", subject, (System.nanoTime() - t0) / 1e6,
                 sandbox.scenes());
         return session;
+    }
+
+    /**
+     * Runs a throwaway scene while a game loads, so the first preview after it does not pay for building the engine,
+     * running its code for the first time, or the textures GraphicsLib loads on first draw. The steps are undirected, so
+     * nothing fires, and only the engine's render is drawn, which leaves the screen as it was. Never throws.
+     */
+    static void prewarm() {
+        long t0 = System.nanoTime();
+        try {
+            PreviewSession session = start(new PreviewSubject(PREWARM_WEAPON_ID, null), null);
+            try {
+                for (int i = 0; i < PREWARM_STEPS; i++) session.step(MAX_STEP, false);
+                session.drawScene(0f, 0f, PREWARM_WIDTH, PREWARM_HEIGHT, null);
+            } catch (RuntimeException | Error e) {
+                session.dispose(true);
+                throw e;
+            }
+            session.dispose(false);
+            PreviewHud.loadFont();
+            Log.info("preview engine prewarmed in %.0f ms", (System.nanoTime() - t0) / 1e6);
+        } catch (Throwable t) {
+            Log.error("prewarming the preview engine failed; the first preview builds it instead", t);
+        }
     }
 
     /**
@@ -129,12 +155,20 @@ final class PreviewSession {
 
     /** Simulation step. Called from the panel's advance(). */
     void tick(float dt) {
+        step(dt, true);
+    }
+
+    /**
+     * {@code directed}: the scenario directs the step (aim, fire, the dummy's moves and launches) and the scene is heard.
+     * Undirected, nothing fires, and the listener stays far away.
+     */
+    private void step(float dt, boolean directed) {
         sandbox.swapIn();
         try {
-            applySound();
+            applySound(directed && WeaponTooltipPreviewSettings.sound());
             long t0 = System.nanoTime();
             float step = Math.min(dt, MAX_STEP);
-            scenario.beforeStep(step);
+            if (directed) scenario.beforeStep(step);
             sandbox.advance(step);
             if (scenario.targetDummy().ship() != arcTarget) rearmArcRenderer();
             if (arcRenderer != null) arcRenderer.advance(step);
@@ -150,29 +184,33 @@ final class PreviewSession {
     }
 
     /**
-     * Puts the sound listener at the scene, where the preview plays at the player's sound effects volume. With sound
-     * off, the listener goes far away instead, which mutes the scene.
+     * Puts the sound listener at the scene, where the preview plays at the player's sound effects volume, or far away,
+     * which mutes the scene.
      */
-    private void applySound() {
-        Global.getSoundPlayer().setListenerPosOverrideOneFrame(
-                WeaponTooltipPreviewSettings.sound() ? scenario.listenerPosition() : FAR_AWAY);
+    private void applySound(boolean audible) {
+        Global.getSoundPlayer().setListenerPosOverrideOneFrame(audible ? scenario.listenerPosition() : FAR_AWAY);
     }
 
     /** Draws the preview into the panel's UI rectangle. Called from the panel's render(). */
     void render(float x, float y, float w, float h, float alpha) {
+        drawScene(x, y, w, h, arcRenderer != null ? this::drawArc : null);
+        if (split) drawSplitDecorations(x, y, w, h, alpha);
+        drawHud(alpha);
+    }
+
+    /** The engine's picture of the scene in the UI rectangle, then {@code overlay} in each pane (null for none). */
+    private void drawScene(float x, float y, float w, float h, Runnable overlay) {
         layout(x, y, w, h);
         long t0 = System.nanoTime();
         sandbox.swapIn();
         try {
-            sandbox.render(panes, paneCount, BACKGROUND, scenario.weaponHost().weapon() != null ? this::drawArc : null);
+            sandbox.render(panes, paneCount, BACKGROUND, overlay);
             if (split) collectStripMarkers();
         } finally {
             sandbox.swapOut();
         }
         renderMs += (System.nanoTime() - t0) / 1e6;
         renders++;
-        if (split) drawSplitDecorations(x, y, w, h, alpha);
-        drawHud(alpha);
     }
 
     /**
@@ -204,7 +242,7 @@ final class PreviewSession {
         }
     }
 
-    /** Gives the engine back: normally its scene is just cleared; after a failure the engine is rebuilt. */
+    /** Gives the engine back: normally it waits for the next preview; after a failure it is discarded and rebuilt. */
     void dispose(boolean failed) {
         if (disposed) return;
         disposed = true;
@@ -304,20 +342,12 @@ final class PreviewSession {
         Misc.renderQuad(gapX, paneBottom, GAP_UI, h - STRIP_UI, STRIP_COLOR, alpha);
         Misc.renderQuad(x, y, w, STRIP_UI, STRIP_COLOR, alpha);
 
-        // Broken axis: one clean slash across the gap.
-        GL11.glEnable(GL11.GL_LINE_SMOOTH);
-        GL11.glLineWidth(1.5f);
-        GL11.glColor4f(0.45f, 0.85f, 1f, 0.6f * alpha);
-        GL11.glBegin(GL11.GL_LINES);
-        GL11.glVertex2f(gapX + 4f, paneBottom + 4f);
-        GL11.glVertex2f(gapX + GAP_UI - 4f, y + h - 4f);
-        GL11.glEnd();
-        GL11.glLineWidth(1f);
-
         // Full-scale strip: baseline, range end tick, weapon host and target markers, shot blips.
         float pad = 6f;
         float sx0 = x + pad, sx1 = x + w - pad, sy = y + STRIP_UI / 2f;
         float minX = scenario.frameMinX, spanX = scenario.frameMaxX - scenario.frameMinX;
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+        GL11.glLineWidth(1f);
         GL11.glColor4f(0.45f, 0.85f, 1f, 0.35f * alpha);
         GL11.glBegin(GL11.GL_LINES);
         GL11.glVertex2f(sx0, sy);
@@ -328,18 +358,19 @@ final class PreviewSession {
         GL11.glVertex2f(rx, sy + 4f);
         GL11.glEnd();
 
-        // Dividers where a shot leaves the weapon host pane and enters the target pane, styled like the gap slash.
-        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+        // Broken axis: one clean slash across the gap, and the same on the strip where a shot leaves the weapon host
+        // pane and enters the target pane.
         GL11.glLineWidth(1.5f);
         GL11.glColor4f(0.45f, 0.85f, 1f, 0.6f * alpha);
         GL11.glBegin(GL11.GL_LINES);
+        GL11.glVertex2f(gapX + 4f, paneBottom + 4f);
+        GL11.glVertex2f(gapX + GAP_UI - 4f, y + h - 4f);
         for (float edge : new float[]{panes[0].worldX + panes[0].worldWidth, panes[1].worldX}) {
             float ex = sx0 + (edge - minX) / spanX * (sx1 - sx0);
             GL11.glVertex2f(ex - 2.5f, sy - 5f);
             GL11.glVertex2f(ex + 2.5f, sy + 5f);
         }
         GL11.glEnd();
-        GL11.glLineWidth(1f);
 
         float hx = sx0 + (weaponHostX - minX) / spanX * (sx1 - sx0);
         Misc.renderQuad(hx - 2f, sy - 2f, 4f, 4f, WEAPON_HOST_MARKER, alpha);

@@ -22,5 +22,6 @@ public class WeaponTooltipPreviewModPlugin extends BaseModPlugin {
         PreviewController controller = new PreviewController();
         Global.getSector().addTransientScript(controller);
         Global.getSector().getListenerManager().addListener(controller, true);
+        PreviewController.prewarm();
     }
 }

@@ -28,6 +28,7 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod mapSetBounds;
     public static Class<?> inputClass;
     public static Refl.ReflectedField animManagers;
+    public static Refl.ReflectedMethod tooltipContents;
 
     // optional: the game's weapon arc, failure = no arc drawn
     public static Class<?> arcRendererClass;
@@ -62,6 +63,8 @@ public final class StarfarerBridge {
             inputClass = engineAdvance.parameterTypes[1];
             mapSetBounds = method(mapClass, new String[]{"super", "o00000"}, float.class, float.class, float.class, float.class);
             animManagers = field(AnimationManager.class, "managers");
+            // The panel a tooltip builds its content in. Its return type is obfuscated, so no direct call.
+            tooltipContents = method(StandardTooltipV2.class, "getContents");
             ready = true;
             Log.info("bridge: all required entries resolved");
         } catch (Throwable t) {

@@ -16,6 +16,7 @@ import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.starfarer.ui.impl.StandardTooltipV2Expandable;
 import weapontooltippreview.Log;
 import weapontooltippreview.bridge.Refl;
+import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.scenario.PreviewSubject;
 import weapontooltippreview.scenario.RefitShip;
 import weapontooltippreview.scenario.ThreatSelection;
@@ -31,6 +32,7 @@ import java.util.WeakHashMap;
 /**
  * Finds live weapon and fighter LPC tooltips (direct children of the campaign screen panel while shown) and injects the
  * preview panel between the description and the weapon or wing data, growing the tooltip downward.
+ * Tooltips are held as UIComponentAPI: calls through their own class compile against obfuscated return types.
  */
 final class TooltipWatcher {
 
@@ -62,19 +64,18 @@ final class TooltipWatcher {
         }
     }
 
-    private final Map<Object, TipState> states = new WeakHashMap<>();
+    private final Map<UIComponentAPI, TipState> states = new WeakHashMap<>();
     /** Strong references so engines are always released, even if the tooltip itself is collected first. */
     private final List<PreviewPanel> livePreviews = new ArrayList<>();
-    private final Map<Object, Boolean> found = new IdentityHashMap<>();
+    private final Map<UIComponentAPI, Boolean> found = new IdentityHashMap<>();
     private int nextId = 1;
 
     void tick() {
         found.clear();
-        Object state = UiTree.currentAppState();
-        UIPanelAPI screen = UiTree.screenPanel(state);
-        if (screen != null && !UiTree.isCodexShowing(state)) scan(screen, 0);
-        for (Object tip : found.keySet()) handle(tip);
-        for (Map.Entry<Object, TipState> e : states.entrySet()) {
+        UIPanelAPI screen = UiTree.screenPanel();
+        if (screen != null && !UiTree.isCodexShowing()) scan(screen, 0);
+        for (UIComponentAPI tip : found.keySet()) handle(tip);
+        for (Map.Entry<UIComponentAPI, TipState> e : states.entrySet()) {
             TipState s = e.getValue();
             if (s.visible && !found.containsKey(e.getKey())) {
                 s.visible = false;
@@ -124,14 +125,14 @@ final class TooltipWatcher {
 
     private void scan(Object node, int depth) {
         if (node instanceof StandardTooltipV2) {
-            found.put(node, Boolean.TRUE);
+            found.put((StandardTooltipV2) node, Boolean.TRUE);
             return;
         }
         if (depth >= SCAN_DEPTH) return;
         for (Object c : UiTree.children(node)) scan(c, depth + 1);
     }
 
-    private void handle(Object tip) {
+    private void handle(UIComponentAPI tip) {
         TipState s = states.get(tip);
         if (s == null) {
             s = new TipState(nextId++, subjectOf(tip));
@@ -157,7 +158,7 @@ final class TooltipWatcher {
                 enforcePlacement(tip, s);
                 return;
             }
-            inject(tip, s, null, topOf(tip));
+            inject(tip, s, null, UiTree.top(tip));
         } else {
             enforcePlacement(tip, s);
         }
@@ -170,10 +171,10 @@ final class TooltipWatcher {
      * page's wing or weapon. The top edge stays where it was: the game nudges taller pages through align offsets, which
      * mean nothing once placeOnScreen has re-anchored the tooltip.
      */
-    private void turnPage(Object tip, TipState s, int page) {
+    private void turnPage(UIComponentAPI tip, TipState s, int page) {
         CustomPanelAPI running = s.injected != null ? s.injected.get() : null;
         PreviewSubject previous = s.subject;
-        float top = topOf(tip);
+        float top = UiTree.top(tip);
         rebuildOnce((StandardTooltipV2Expandable) tip);
         s.page = page;
         s.subject = subjectOf(tip);
@@ -181,7 +182,7 @@ final class TooltipWatcher {
         Log.info("tooltip #%d turned to page %d: %s", s.id, page, s.subject);
         if (SandboxHost.isDisabled() || PreviewPanel.hasFailed(s.subject)) {
             disposePreview(s);
-            if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, top, hintOverhang(tip));
+            placeOnScreen(tip, s, top, hintOverhang(tip));
             return;
         }
         boolean keepRunning = s.subject.equals(previous) && s.preview != null && !s.preview.isDisposed();
@@ -197,10 +198,6 @@ final class TooltipWatcher {
         } finally {
             tip.setRecreateEveryFrame(false);
         }
-    }
-
-    private static float topOf(Object tip) {
-        return tip instanceof UIComponentAPI ? UiTree.top((UIComponentAPI) tip) : 0f;
     }
 
     /**
@@ -223,9 +220,9 @@ final class TooltipWatcher {
      * Not the tooltip's Codex key: the game leaves it on the wing for weapons the Codex hides.
      */
     private static String weaponOnPage(Object tip) {
-        Refl.ReflectedField pageField = Refl.fieldNamed(tip.getClass(), "index");
+        Refl.ReflectedField pageField = pageField(tip);
         Refl.ReflectedField weaponsField = Refl.fieldOfType(tip.getClass(), List.class, false);
-        if (pageField == null || pageField.type != int.class || weaponsField == null) return null;
+        if (pageField == null || weaponsField == null) return null;
         int page = (Integer) pageField.get(tip);
         List<?> weapons = (List<?>) weaponsField.get(tip);
         if (page < 1 || page > weapons.size()) return null;
@@ -233,15 +230,21 @@ final class TooltipWatcher {
         return weapon instanceof WeaponSpecAPI ? ((WeaponSpecAPI) weapon).getWeaponId() : null;
     }
 
+    /** The page index of a tooltip with pages (fighter LPC tooltips); null for the others. */
+    private static Refl.ReflectedField pageField(Object tip) {
+        Refl.ReflectedField f = Refl.fieldNamed(tip.getClass(), "index");
+        return f != null && f.type == int.class ? f : null;
+    }
+
     // ------------------------------------------------------------------ injection
 
     /** {@code running}: a preview panel to put back; null starts a new preview. */
-    private void inject(Object tip, TipState s, CustomPanelAPI running, float originalTop) {
+    private void inject(UIComponentAPI tip, TipState s, CustomPanelAPI running, float originalTop) {
         stopRecreatingEveryFrame(tip, s);
         // The preview goes at the bottom of the description segment, above the data. The tooltip builds its contents in
         // order: the segment (title, design type, description, cost, "You own a total") is all labels, and the data
         // (the weapon's stats, a tooltip of their own, or the wing's stats panel) is the first component that is not.
-        UIPanelAPI parent = (UIPanelAPI) ((StandardTooltipV2) tip).getContents();
+        UIPanelAPI parent = (UIPanelAPI) StarfarerBridge.tooltipContents.invoke(tip);
         UIComponentAPI data = firstNonLabel(parent);
         if (data == null) {
             Log.info("tooltip #%d: no data below the description, cannot inject", s.id);
@@ -269,25 +272,23 @@ final class TooltipWatcher {
         s.injected = new WeakReference<>(panel);
 
         pp.setSize(pp.getWidth(), pp.getHeight() + shift);
-        if (parent != tip && tip instanceof UIComponentAPI) {
-            PositionAPI tp = ((UIComponentAPI) tip).getPosition();
+        if (parent != tip) {
+            PositionAPI tp = tip.getPosition();
             tp.setSize(tp.getWidth(), tp.getHeight() + shift);
         }
-        Refl.ReflectedField heightField = Refl.fieldNamed(tip.getClass(), "height");
-        if (heightField != null && heightField.type == float.class) {
-            heightField.set(tip, (Float) heightField.get(tip) + shift);
+        if (tip instanceof TooltipMakerAPI) {
+            TooltipMakerAPI maker = (TooltipMakerAPI) tip;
+            maker.setHeightSoFar(maker.getHeightSoFar() + shift);
         }
 
-        if (tip instanceof UIComponentAPI) placeOnScreen((UIComponentAPI) tip, s, originalTop, hintBelow);
+        placeOnScreen(tip, s, originalTop, hintBelow);
         Log.info("tooltip #%d: preview for %s injected above %s (%.0f tall, %.0f hint, screen %.0f)", s.id, s.subject,
-                data.getClass().getSimpleName(),
-                tip instanceof UIComponentAPI ? ((UIComponentAPI) tip).getPosition().getHeight() : 0f, hintBelow,
+                data.getClass().getSimpleName(), tip.getPosition().getHeight(), hintBelow,
                 Global.getSettings().getScreenHeight());
     }
 
     private CustomPanelAPI newPreview(Object tip, TipState s, float width) {
         // One live engine at a time: any other preview belongs to a tooltip that is gone or going.
-        disposePreview(s);
         disposeAll();
         RefitShip refit = Global.getSector().getCampaignUI().getCurrentCoreTab() == CoreUITabId.REFIT
                 ? RefitLookup.find(tip) : null;
@@ -310,14 +311,12 @@ final class TooltipWatcher {
      * How far the "F2 open Codex" line hangs below the tooltip's frame; 0 without one. The game places it under the
      * content, outside the height the frame reports, so it is measured here, before the preview moves anything.
      */
-    private static float hintOverhang(Object tip) {
+    private static float hintOverhang(UIComponentAPI tip) {
         Refl.ReflectedField f = Refl.fieldNamed(tip.getClass(), "expandLabel");
         Object label = f != null ? f.get(tip) : null;
-        if (!(label instanceof UIComponentAPI) || !(tip instanceof UIComponentAPI) || !UiTree.children(tip).contains(label)) {
-            return 0f;
-        }
+        if (!(label instanceof UIComponentAPI) || !UiTree.children(tip).contains(label)) return 0f;
         PositionAPI lp = ((UIComponentAPI) label).getPosition();
-        return Math.max(((UIComponentAPI) tip).getPosition().getY() - lp.getY(), lp.getHeight());
+        return Math.max(tip.getPosition().getY() - lp.getY(), lp.getHeight());
     }
 
     /**
@@ -331,8 +330,8 @@ final class TooltipWatcher {
         StandardTooltipV2Expandable expandable = (StandardTooltipV2Expandable) tip;
         if (!expandable.isRecreateEveryFrame()) return;
         expandable.setRecreateEveryFrame(false);
-        Refl.ReflectedField pageField = Refl.fieldNamed(tip.getClass(), "index");
-        if (pageField != null && pageField.type == int.class) {
+        Refl.ReflectedField pageField = pageField(tip);
+        if (pageField != null) {
             s.pageField = pageField;
             s.page = (Integer) pageField.get(tip);
         }
@@ -355,11 +354,11 @@ final class TooltipWatcher {
     }
 
     /** Re-apply our placement if the game moved the tooltip (e.g. on mouse move). */
-    private static void enforcePlacement(Object tip, TipState s) {
-        if (Float.isNaN(s.desiredBottom) || !(tip instanceof UIComponentAPI)) return;
-        PositionAPI tp = ((UIComponentAPI) tip).getPosition();
+    private static void enforcePlacement(UIComponentAPI tip, TipState s) {
+        if (Float.isNaN(s.desiredBottom)) return;
+        PositionAPI tp = tip.getPosition();
         if (Math.abs(tp.getY() - s.desiredBottom) < 0.5f) return;
-        applyBottom((UIComponentAPI) tip, s.desiredBottom);
+        applyBottom(tip, s.desiredBottom);
     }
 
     private static void applyBottom(UIComponentAPI tip, float bottom) {

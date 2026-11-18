@@ -31,11 +31,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The preview's readouts, styled after the battle UI and drawn in UI coordinates over the scene. The dummy gets the
- * target reticle's FLUX and HULL bars in the top right corner and the armor hologram in the bottom right. Under the
- * weapon host, a weapon gets its line from the weapon list (name, ammo, reload bar), a carrier the fighter widget.
- * Same fonts and colours as in combat, laid out to fit the panel (the game's own reticle sprawls far beyond it).
- * Callers set up blending and leave texturing off.
+ * The preview's readouts, styled after the battle UI and drawn in UI coordinates over the scene.
+ * Most of it is redrawn manually.
  */
 final class PreviewHud {
 
@@ -56,11 +53,7 @@ final class PreviewHud {
     private static final Color ENEMY = settingsColor("textEnemyColor", new Color(255, 100, 0));
     private static final Color FRIEND = settingsColor("textFriendColor", new Color(155, 255, 0));
 
-    /**
-     * The armor hologram: the game's hull schematic widget (the one on the target reticle), with its textures, colours
-     * and constants. The reticle's box is 125 UI units for a capital ship, scaled by hull size (a destroyer's is 75);
-     * the preview draws it at two thirds of that.
-     */
+    // The armor hologram with its textures, colours and constants.
     private static final float SCHEMATIC_CAPITAL_SIZE = 125f;
     private static final float SCHEMATIC_SCALE = 2f / 3f;
     private static final String SPOTLIGHT_PATH = "graphics/hud/spotlight.png";
@@ -68,13 +61,7 @@ final class PreviewHud {
     private static final Color GRID_COLOR = new Color(255, 210, 0);
     private static final int CELL_ALPHA = 102;
 
-    /**
-     * The combat fighter widget: a square slot per wing, its icon drawn 12 units wider (fighters in formation overhang
-     * the slot a little), and, added here, a bar toward the next replacement. Each fighter is its hull tinted with the
-     * widget colour (0.4 alpha when up and running, 0.2 when lost), its weapons, and a hologram over it: the
-     * {@code grid_small} grid seen through a {@code spotlight_small} mask, at full strength when up and half when lost,
-     * and, when up, the spotlight itself in the widget colour.
-     */
+    // The combat fighter widget
     private static final float WING_ICON = 40f;
     private static final float ICON_OVERHANG = 12f;
     private static final float FIGHTER_ALIVE_ALPHA = 0.4f;
@@ -83,10 +70,8 @@ final class PreviewHud {
     private static final String ICON_SPOTLIGHT_PATH = "graphics/hud/spotlight_small.png";
     private static final String ICON_GRID_PATH = "graphics/hud/grid_small.png";
     private static final float COOLDOWN_H = 4f;
-    /**
-     * Fighter positions in the icon by wing size (x, y pairs, -0.5..0.5 of the icon), the game's tables for box, claw
-     * and V formations and for all others. Wings past six fighters show their first six, as in the game.
-     */
+    
+    // Fighter positions in the icon by wing size
     private static final float[][] FORMATION_BOX = {{}, {0f, 0f}, {-0.35f, 0f, 0.35f, 0f}, {0f, 0f, -0.45f, 0f, 0.45f, 0f},
             {-0.4f, 0.4f, -0.4f, -0.4f, 0.4f, 0.4f, 0.4f, -0.4f},
             {0f, -0.3f, -0.45f, -0.3f, 0.45f, -0.3f, -0.25f, 0.33f, 0.25f, 0.33f},
@@ -114,17 +99,12 @@ final class PreviewHud {
     /** Fighter sprites for the wing icons, by wing id, with their native size. */
     private final Map<String, SpriteAPI> fighterSprites = new HashMap<>();
     private final Map<String, float[]> fighterSpriteSizes = new HashMap<>();
-    /**
-     * By wing id: a fleet member of the wing, whose fighter variant the game's weapon renderer reads, and the hull's
-     * centre in sprite pixels, which its weapon slots are relative to (taken from a live fighter, as the spec does not
-     * expose it).
-     */
     private final Map<String, FleetMemberAPI> wingMembers = new HashMap<>();
     private final Map<String, float[]> fighterCenters = new HashMap<>();
     private SpriteAPI iconSpotlight, iconGrid;
     private boolean hologramLoaded;
 
-    /** Schematic of {@link #schematicShip}: a copy of its hull sprite, its sprite metrics, and each cell's reveal. */
+    /** Schematic: a copy of its hull sprite, its sprite metrics, and each cell's reveal. */
     private ShipAPI schematicShip;
     private SpriteAPI hullSprite;
     private SpriteAPI spotlight;
@@ -135,10 +115,7 @@ final class PreviewHud {
 
     // ------------------------------------------------------------------ dummy
 
-    /**
-     * Bars top right and hologram bottom right of the dummy's pane. No diamond: the engine already draws its own around
-     * the weapon host's target.
-     */
+    /** Bars top right and hologram bottom right of the dummy's pane. */
     void drawTarget(ShipAPI ship, float paneX, float paneY, float paneW, float paneH, float alpha) {
         LazyFont f = font();
         if (f == null) return;
@@ -182,13 +159,12 @@ final class PreviewHud {
         advanceReveal();
 
         // Drawn about the box centre (0, 0), in the ship's frame.
-        float cx = 0f, cy = 0f;
         float scale = Math.min(0.85f * size / Math.max(1f, Math.max(spriteW, spriteH)), 2f);
         float sw = spriteW * scale, sh = spriteH * scale;
         // Offset of the sprite's own centre from its middle, which sits at the box centre.
         float ix = spriteCX * scale - sw / 2f, iy = spriteCY * scale - sh / 2f;
         float cell = grid.getCellSize() * scale;
-        float x0 = cx - cell * grid.getLeftOf(), y0 = cy - cell * grid.getBelow();
+        float x0 = -cell * grid.getLeftOf(), y0 = -cell * grid.getBelow();
 
         GL11.glPushAttrib(GL11.GL_STENCIL_BUFFER_BIT | GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
                 | GL11.GL_CURRENT_BIT);
@@ -203,23 +179,20 @@ final class PreviewHud {
             GL11.glStencilOp(GL11.GL_REPLACE, GL11.GL_REPLACE, GL11.GL_REPLACE);
             float clear = ship.getCollisionRadius() * 4f * scale;
             GL11.glDisable(GL11.GL_TEXTURE_2D);
-            Misc.renderQuad(cx - clear, cy - clear, 2f * clear, 2f * clear, Color.WHITE, 1f);
+            Misc.renderQuad(-clear, -clear, 2f * clear, 2f * clear, Color.WHITE, 1f);
             GL11.glAlphaFunc(GL11.GL_GREATER, 0f);
             GL11.glStencilFunc(GL11.GL_EQUAL, 1, 1);
             GL11.glStencilOp(GL11.GL_REPLACE, GL11.GL_REPLACE, GL11.GL_REPLACE);
-            hullSprite.setAngle(0f);
-            hullSprite.setColor(Color.WHITE);
-            hullSprite.setNormalBlend();
             hullSprite.setCenter(spriteCX * scale, spriteCY * scale);
             hullSprite.setAlphaMult(1f);
             hullSprite.setSize(scale > 1f ? sw - 2f : sw, scale > 1f ? sh - 2f : sh);
-            hullSprite.renderAtCenter(cx, cy);
+            hullSprite.renderAtCenter(0f, 0f);
             GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP);
             GL11.glDisable(GL11.GL_ALPHA_TEST);
 
             hullSprite.setSize(sw, sh);
             hullSprite.setAlphaMult(0.25f * alpha);
-            hullSprite.renderAtCenter(cx, cy);
+            hullSprite.renderAtCenter(0f, 0f);
 
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             GL11.glEnable(GL11.GL_BLEND);
@@ -239,7 +212,7 @@ final class PreviewHud {
             if (spotlight != null) {
                 spotlight.setSize(size, size);
                 spotlight.setAlphaMult(alpha * MathUtils.clamp(ship.getHitpoints() / Math.max(1f, ship.getMaxHitpoints()), 0f, 1f));
-                spotlight.renderAtCenter(cx - ix, cy - iy);
+                spotlight.renderAtCenter(-ix, -iy);
             }
 
             // Sprite.render leaves blending off.
@@ -312,6 +285,9 @@ final class PreviewHud {
             spriteCX = live.getCenterX() >= 0f ? live.getCenterX() : spriteW / 2f;
             spriteCY = live.getCenterY() >= 0f ? live.getCenterY() : spriteH / 2f;
             hullSprite = Global.getSettings().getSprite(ship.getHullSpec().getSpriteName());
+            hullSprite.setAngle(0f);
+            hullSprite.setColor(Color.WHITE);
+            hullSprite.setNormalBlend();
         } catch (RuntimeException e) {
             Log.info("no schematic sprite for %s: %s", ship.getHullSpec().getHullId(), e);
         }
@@ -627,18 +603,15 @@ final class PreviewHud {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }
 
+    /** Frees the text strings' OpenGL resources; everything else goes with the hud, which its session drops. */
     void dispose() {
         for (LazyFont.DrawableString s : texts.values()) s.dispose();
         texts.clear();
-        schematicShip = null;
-        hullSprite = null;
-        fighterSprites.clear();
-        fighterSpriteSizes.clear();
-        wingMembers.clear();
-        fighterCenters.clear();
-        iconSpotlight = null;
-        iconGrid = null;
-        hologramLoaded = false;
+    }
+
+    /** Loads the readouts' font ahead of the first preview (see PreviewSession.prewarm). */
+    static void loadFont() {
+        font();
     }
 
     private static LazyFont font() {
