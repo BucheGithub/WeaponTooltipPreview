@@ -2,6 +2,7 @@ package weapontooltippreview.scenario;
 
 import com.fs.starfarer.api.combat.CombatEngineAPI;
 import com.fs.starfarer.api.combat.CombatFleetManagerAPI;
+import com.fs.starfarer.api.combat.DamagingProjectileAPI;
 import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
 import com.fs.starfarer.api.combat.WeaponAPI;
@@ -14,6 +15,7 @@ import org.lazywizard.lazylib.MathUtils;
 import org.lwjgl.util.vector.Vector2f;
 import weapontooltippreview.Log;
 
+import java.util.List;
 import java.util.Locale;
 
 /** Directs the preview: deploys the weapon host, places the target dummy against it, frames the scene, and starts a new setup when the dummy is destroyed, a non-reloading magazine is spent, or the player cycles point-defense threats. */
@@ -134,6 +136,10 @@ public final class Scenario {
 
     public TargetDummy targetDummy() {
         return targetDummy;
+    }
+
+    public List<DamagingProjectileAPI> projectiles() {
+        return engine.getProjectiles();
     }
 
     /** Listener at the firing weapon, or the middle of the frame for a wing. */

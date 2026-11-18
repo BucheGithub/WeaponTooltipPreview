@@ -2,6 +2,7 @@ package weapontooltippreview.ui;
 
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.combat.ArmorGridAPI;
+import com.fs.starfarer.api.combat.DamagingProjectileAPI;
 import com.fs.starfarer.api.combat.FighterLaunchBayAPI;
 import com.fs.starfarer.api.combat.FighterWingAPI;
 import com.fs.starfarer.api.combat.FluxTrackerAPI;
@@ -21,6 +22,8 @@ import org.lazywizard.lazylib.ui.FontException;
 import org.lazywizard.lazylib.ui.LazyFont;
 import org.lwjgl.opengl.GL11;
 import weapontooltippreview.Log;
+import weapontooltippreview.scenario.Scenario;
+import weapontooltippreview.scenario.WeaponHost;
 
 import java.awt.Color;
 import java.io.IOException;
@@ -30,11 +33,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * The preview's readouts, styled after the battle UI and drawn in UI coordinates over the scene.
- * Most of it is redrawn manually.
- */
+/** All 2D OpenGL drawing for the preview panel: background, corner brackets, split-view radar strip, and the combat HUD readouts. */
 final class PreviewHud {
+
+    static final float[] BACKGROUND = {0.02f, 0.035f, 0.055f};
+    private static final Color BACKGROUND_COLOR = new Color(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2]);
+    private static final Color STRIP_COLOR = new Color(BACKGROUND[0] * 0.6f, BACKGROUND[1] * 0.6f, BACKGROUND[2] * 0.6f);
+    private static final Color WEAPON_HOST_MARKER = new Color(0.55f, 0.9f, 0.55f);
+    private static final Color TARGET_MARKER = new Color(0.95f, 0.45f, 0.35f);
+    private static final Color SHOT_BLIP = new Color(1f, 0.9f, 0.5f);
+    private static final float BRACKET = 10f;
+    static final float SPLIT_GAP_UI = 22f;
+    static final float SPLIT_STRIP_UI = 16f;
+    private static final int MAX_BLIPS = 64;
 
     /** The combat HUD's font (target reticle, weapon list). */
     private static final String FONT_PATH = "graphics/fonts/victor10.fnt";
@@ -113,6 +124,127 @@ final class PreviewHud {
     private float[][] reveal;
     private long lastRevealNanos;
 
+    // ------------------------------------------------------------------ panel chrome & overlays
+
+    /** Dark quad drawn under the scene. */
+    void drawBackground(float x, float y, float w, float h, float alpha) {
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        Misc.renderQuad(x, y, w, h, BACKGROUND_COLOR, alpha);
+        GL11.glPopAttrib();
+    }
+
+    /** Corner brackets around the scene and (when shown) the threat hint bar below it. */
+    void drawFrame(float x, float y, float w, float h, boolean threatHint, float hintY, float hintH, float alpha) {
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_LINE_BIT);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        drawBrackets(x, y, w, h, alpha);
+        if (threatHint) drawBrackets(x, hintY, w, hintH, alpha);
+        GL11.glPopAttrib();
+    }
+
+    /** Draws the split-view strip (when split), the weapon/wing readout, and the target bars + armor schematic. */
+    void drawOverlays(Scenario scenario, PreviewScene.Pane[] panes, int paneCount, boolean split, float x, float y,
+                      float w, float h, float alpha) {
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_LINE_BIT);
+        try {
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            if (split) drawSplitStrip(scenario, panes, x, y, w, h, alpha);
+            PreviewScene.Pane weaponHostPane = panes[0];
+            WeaponHost weaponHost = scenario.weaponHost();
+            if (weaponHost.weapon() != null) {
+                drawWeapon(weaponHost.weapon(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+                        weaponHostPane.uiH, alpha);
+            } else {
+                drawWings(weaponHost.ship(), weaponHostPane.uiX, weaponHostPane.uiY, weaponHostPane.uiW,
+                        weaponHostPane.uiH, alpha);
+            }
+            ShipAPI target = scenario.targetDummy().ship();
+            if (target.isAlive()) {
+                PreviewScene.Pane p = panes[paneCount - 1];
+                drawTarget(target, p.uiX, p.uiY, p.uiW, p.uiH, alpha);
+            }
+        } finally {
+            GL11.glPopAttrib();
+        }
+    }
+
+    /** Split-view timeline: bottom strip, broken-axis slashes, ship markers, and projectile blips. */
+    private static void drawSplitStrip(Scenario scenario, PreviewScene.Pane[] panes, float x, float y, float w,
+                                       float h, float alpha) {
+        float gapX = x + (w - SPLIT_GAP_UI) / 2f;
+        float paneBottom = y + SPLIT_STRIP_UI;
+
+        Misc.renderQuad(gapX, paneBottom, SPLIT_GAP_UI, h - SPLIT_STRIP_UI, STRIP_COLOR, alpha);
+        Misc.renderQuad(x, y, w, SPLIT_STRIP_UI, STRIP_COLOR, alpha);
+
+        WeaponAPI weapon = scenario.weaponHost().weapon();
+        float weaponHostX = scenario.weaponHost().ship().getLocation().x;
+        float targetX = scenario.targetDummy().ship().getLocation().x;
+        float rangeEndX = weapon.getLocation().x + weapon.getRange();
+
+        float pad = 6f;
+        float sx0 = x + pad, sx1 = x + w - pad, sy = y + SPLIT_STRIP_UI / 2f;
+        float minX = scenario.frameMinX, spanX = scenario.frameMaxX - scenario.frameMinX;
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+        GL11.glLineWidth(1f);
+        GL11.glColor4f(0.45f, 0.85f, 1f, 0.35f * alpha);
+        GL11.glBegin(GL11.GL_LINES);
+        GL11.glVertex2f(sx0, sy);
+        GL11.glVertex2f(sx1, sy);
+        float rx = sx0 + (rangeEndX - minX) / spanX * (sx1 - sx0);
+        GL11.glColor4f(0.45f, 0.85f, 1f, 0.8f * alpha);
+        GL11.glVertex2f(rx, sy - 4f);
+        GL11.glVertex2f(rx, sy + 4f);
+        GL11.glEnd();
+
+        GL11.glLineWidth(1.5f);
+        GL11.glColor4f(0.45f, 0.85f, 1f, 0.6f * alpha);
+        GL11.glBegin(GL11.GL_LINES);
+        GL11.glVertex2f(gapX + 4f, paneBottom + 4f);
+        GL11.glVertex2f(gapX + SPLIT_GAP_UI - 4f, y + h - 4f);
+        for (float edge : new float[]{panes[0].worldX + panes[0].worldWidth, panes[1].worldX}) {
+            float ex = sx0 + (edge - minX) / spanX * (sx1 - sx0);
+            GL11.glVertex2f(ex - 2.5f, sy - 5f);
+            GL11.glVertex2f(ex + 2.5f, sy + 5f);
+        }
+        GL11.glEnd();
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+
+        float hx = sx0 + (weaponHostX - minX) / spanX * (sx1 - sx0);
+        Misc.renderQuad(hx - 2f, sy - 2f, 4f, 4f, WEAPON_HOST_MARKER, alpha);
+        float tx = sx0 + (targetX - minX) / spanX * (sx1 - sx0);
+        Misc.renderQuad(tx - 2.5f, sy - 2.5f, 5f, 5f, TARGET_MARKER, alpha);
+        int blips = 0;
+        for (DamagingProjectileAPI p : scenario.projectiles()) {
+            if (p.getWeapon() != weapon) continue;
+            float bx = sx0 + (p.getLocation().x - minX) / spanX * (sx1 - sx0);
+            Misc.renderQuad(bx - 1f, sy - 1f, 2f, 2f, SHOT_BLIP, alpha);
+            if (++blips == MAX_BLIPS) break;
+        }
+    }
+
+    /** HUD brackets */
+    private static void drawBrackets(float x, float y, float w, float h, float alpha) {
+        GL11.glLineWidth(1f);
+        GL11.glColor4f(0.35f, 0.75f, 0.85f, 0.9f * alpha);
+        GL11.glBegin(GL11.GL_LINES);
+        float[][] corners = {{x, y, 1, 1}, {x + w, y, -1, 1}, {x, y + h, 1, -1}, {x + w, y + h, -1, -1}};
+        for (float[] c : corners) {
+            GL11.glVertex2f(c[0], c[1]);
+            GL11.glVertex2f(c[0] + c[2] * BRACKET, c[1]);
+            GL11.glVertex2f(c[0], c[1]);
+            GL11.glVertex2f(c[0], c[1] + c[3] * BRACKET);
+        }
+        GL11.glEnd();
+    }
+
     // ------------------------------------------------------------------ dummy
 
     /** Bars top right and hologram bottom right of the dummy's pane. */
@@ -144,13 +276,7 @@ final class PreviewHud {
         if (size > 16f) drawSchematic(ship, right, paneY + MARGIN, size, alpha);
     }
 
-    /**
-     * The game's hull schematic, step for step: the hull's silhouette is marked in the stencil buffer and everything
-     * after is clipped to it; the hull sprite at a quarter alpha; every armor cell in the hostile gradient (dark when
-     * stripped, orange when whole); the yellow spotlight, as bright as the hull is whole; the grid, its lines fading
-     * toward their ends and toward the edges. Scaled so the sprite's longer side spans 85% of the box, and turned to the
-     * ship's facing on screen, as the reticle draws it.
-     */
+    /** Recreating the armor schematic from analysis in Vanilla. */
     private void drawSchematic(ShipAPI ship, float right, float bottom, float size, float alpha) {
         if (ship != schematicShip) setUpSchematic(ship);
         ArmorGridAPI grid = ship.getArmorGrid();
@@ -246,7 +372,7 @@ final class PreviewHud {
         return a * a * alpha * 0.5f;
     }
 
-    /** A one-unit line in the grid colour, transparent at both ends and {@code alpha} at its middle. */
+    /** A one-unit line in the grid colour, transparent at both ends. */
     private static void fadingLine(float x1, float y1, float x2, float y2, float alpha) {
         boolean vertical = x1 == x2;
         float dx = vertical ? 0.5f : 0f, dy = vertical ? 0f : 0.5f;
@@ -265,10 +391,7 @@ final class PreviewHud {
         GL11.glEnd();
     }
 
-    /**
-     * New target: a copy of its hull sprite (the live one draws the ship in the scene), its metrics, and the reveal
-     * the game starts each cell at, further from the grid's centre starting further below zero.
-     */
+    /** New target: a copy of its hull sprite for the new schematic. */
     private void setUpSchematic(ShipAPI ship) {
         schematicShip = ship;
         float[][] cells = ship.getArmorGrid().getGrid();
@@ -365,10 +488,7 @@ final class PreviewHud {
         return weaponName;
     }
 
-    /**
-     * As the combat HUD fills it: progress toward the next reload while ammo regenerates, otherwise the cooldown
-     * between shots (full when ready to fire, empty once a non-regenerating magazine is spent).
-     */
+    /** Progress toward the next reload while ammo regenerates, otherwise the cooldown between shots. */
     private static float reloadFraction(WeaponAPI weapon) {
         if (weapon.usesAmmo()) {
             boolean regenerates = weapon.getAmmoTracker().getAmmoPerSecond() > 0f;
@@ -383,11 +503,7 @@ final class PreviewHud {
 
     // ------------------------------------------------------------------ wings
 
-    /**
-     * The carrier's wings as the combat fighter widget shows them, in the bottom left corner of its pane: one icon per
-     * wing with its fighters in formation, under each a bar filling toward the next replacement (the game's widget has
-     * none), and the replacement rate to their right. The widget's orders line is left out: the preview always engages.
-     */
+    /** The carrier's wings widget rebuilt from analysis in Vanilla. */
     void drawWings(ShipAPI carrier, float paneX, float paneY, float paneW, float paneH, float alpha) {
         LazyFont f = font();
         if (f == null) return;
@@ -411,10 +527,7 @@ final class PreviewHud {
         text("wings.rate", rate, FRIEND, left + PAD + iconsW + GAP, iconCy + f.getBaseHeight() / 2f, alpha);
     }
 
-    /**
-     * The wing in formation as the game's icon draws it, fighter by fighter: the tinted hull, its weapons, the
-     * hologram. Sized as the game sizes them: the more fighters the wing has, the smaller each.
-     */
+    /** The wing in formation as the game's icon draws it. */
     private void drawWingIcon(FighterWingAPI wing, float cx, float cy, float alpha) {
         FighterWingSpecAPI spec = wing.getSpec();
         SpriteAPI sprite = fighterSprite(spec);
@@ -456,10 +569,7 @@ final class PreviewHud {
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    /**
-     * The game's weapon renderer over one fighter, hull facing up: slots placed from the hull's centre, sprites in
-     * their own colours at full alpha, whether the fighter is up or lost (as in combat).
-     */
+    /** The game's weapon renderer over one fighter. */
     private void drawFighterWeapons(FighterWingSpecAPI spec, float spriteLeft, float spriteBottom, float scale,
                                     float alpha) {
         float[] center = fighterCenters.get(spec.getId());
@@ -469,12 +579,7 @@ final class PreviewHud {
                 spriteBottom + center[1] * scale, 90f, scale, alpha, false);
     }
 
-    /**
-     * The game's hologram over one fighter, through the framebuffer's alpha as the game does it: alpha cleared, the
-     * hull's alpha written squared and then multiplied by the spotlight; through that mask, the spotlight added in the
-     * widget colour (fighters up only), then the grid. The game clips all this to the sprite with the stencil; clearing
-     * the mask over everything the overlay covers, and making it opaque again after, comes to the same.
-     */
+    /** The game's hologram over one fighter. */
     private void drawHologram(SpriteAPI hull, float x, float y, float a, boolean lit) {
         if (iconSpotlight == null || iconGrid == null) return;
         float w = hull.getWidth(), h = hull.getHeight();
@@ -563,10 +668,7 @@ final class PreviewHud {
 
     // ------------------------------------------------------------------ drawing
 
-    /**
-     * A bar as the combat HUD draws it: a solid fill and, until full, a thin tick at its end. {@code hard} >= 0 splits
-     * the fill as the flux bar does: hard flux solid, the soft flux beyond it dimmer.
-     */
+    /** Progress bar for flux, hull, reload etc... */
     private static void bar(float x, float y, float w, float h, Color c, float fill, float hard, float alpha) {
         float f = MathUtils.clamp(fill, 0f, 1f);
         if (hard >= 0f) {

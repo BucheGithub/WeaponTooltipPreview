@@ -4,40 +4,33 @@ import com.fs.starfarer.api.EveryFrameScript;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.listeners.CampaignInputListener;
 import com.fs.starfarer.api.input.InputEventAPI;
-import org.dark.shaders.util.GraphicsLibSettings;
-import org.dark.shaders.util.ShaderHook;
 import weapontooltippreview.Log;
-import weapontooltippreview.WeaponTooltipPreviewSettings;
-import weapontooltippreview.scenario.ThreatSelection;
+import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.sim.EngineSandbox;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Campaign driver: watches weapon tooltips, manages the shared preview engine, and processes preview hotkeys.
+/** Campaign driver: registers the transient tooltip watcher, ticks the shared preview engine, and forwards campaign input to the active preview scene.
  */
 public final class PreviewController implements EveryFrameScript, CampaignInputListener {
 
     private static final int MAX_ERRORS = 20;
-    private static final String GRAPHICSLIB_MOD_ID = "shaderLib";
 
-    /** GraphicsLib is optional: its classes are only touched when it is enabled. */
-    private final boolean graphicsLibEnabled = Global.getSettings().getModManager().isModEnabled(GRAPHICSLIB_MOD_ID);
     private final TooltipWatcher tooltips = new TooltipWatcher();
     private final Set<String> loggedErrors = new HashSet<>();
     private int errors;
 
-    /** New game session: forget per-session failures and start from a fresh engine. */
-    public static void reset() {
-        PreviewPanel.clearFailures();
+    /** Resets per-session state, registers the campaign controller, and prewarms the shared preview engine. */
+    public static void onGameLoad() {
+        PreviewScene.clearFailures();
         EngineSandbox.reset();
-    }
-
-    /** Builds the engine and runs a throwaway scene now, during the game load, rather than on the first hover. */
-    public static void prewarm() {
-        PreviewSession.prewarm();
+        if (!StarfarerBridge.isReady()) return;
+        PreviewController controller = new PreviewController();
+        Global.getSector().addTransientScript(controller);
+        Global.getSector().getListenerManager().addListener(controller, true);
+        PreviewScene.prewarm();
     }
 
     @Override
@@ -75,34 +68,9 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     @Override
     public void processCampaignInputPreCore(List<InputEventAPI> events) {
         try {
-            if (graphicsLibEnabled && tooltips.isShowingPreview()) processGraphicsLibToggleKey(events);
-            if (tooltips.isShowingThreatHint()) processThreatKeys(events);
+            tooltips.processInput(events);
         } catch (Throwable t) {
             Log.error("preview keys failed", t);
-        }
-    }
-
-    /** While a point defense preview shows its threat keys, each one cycles its part of what the dummy launches. */
-    private static void processThreatKeys(List<InputEventAPI> events) {
-        for (InputEventAPI event : events) {
-            if (event.isConsumed() || !event.isKeyDownEvent()) continue;
-            int key = event.getEventValue();
-            if (key == WeaponTooltipPreviewSettings.threatModeKey()) ThreatSelection.cycleMode();
-            else if (key == WeaponTooltipPreviewSettings.threatMissileKey()) ThreatSelection.cycleMissile();
-            else if (key == WeaponTooltipPreviewSettings.threatWingKey()) ThreatSelection.cycleWing();
-            else continue;
-            event.consume();
-        }
-    }
-
-    /** GraphicsLib only reads its toggle key from a combat engine's input, which a preview's engine never gets. */
-    private static void processGraphicsLibToggleKey(List<InputEventAPI> events) {
-        for (InputEventAPI event : events) {
-            if (event.isConsumed() || !event.isKeyDownEvent()) continue;
-            if (event.getEventValue() != GraphicsLibSettings.toggleKey()) continue;
-            ShaderHook.enableShaders = !ShaderHook.enableShaders;
-            event.consume();
-            return;
         }
     }
 

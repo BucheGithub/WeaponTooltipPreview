@@ -17,11 +17,6 @@ public class WeaponTooltipPreviewModPlugin extends BaseModPlugin {
     @Override
     public void onGameLoad(boolean newGame) {
         WeaponTooltipPreviewSettings.load();
-        PreviewController.reset();
-        if (!StarfarerBridge.isReady()) return;
-        PreviewController controller = new PreviewController();
-        Global.getSector().addTransientScript(controller);
-        Global.getSector().getListenerManager().addListener(controller, true);
-        PreviewController.prewarm();
+        PreviewController.onGameLoad();
     }
 }

@@ -102,6 +102,7 @@ public final class WeaponHost {
 
     /** Holds still with empty flux, and fires the weapon or sends the wings at the dummy. */
     void step(float dt, ShipAPI dummy) {
+        ship.setShipTarget(dummy);
         ship.getVelocity().set(0f, 0f);
         ship.setAngularVelocity(0f);
         ship.getFluxTracker().setHardFlux(0f);

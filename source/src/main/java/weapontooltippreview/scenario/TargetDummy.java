@@ -193,7 +193,6 @@ public final class TargetDummy {
         launchers = launchersAt(launcherBySlot.keySet());
         time = 0f;
         salvoTimer = FIRST_SALVO_DELAY;
-        weaponHost.setShipTarget(ship);
         if (!launchers.isEmpty()) ship.setShipTarget(weaponHost);
         if (loadout == Loadout.THREATS) {
             Log.info("dummy launches %s, wing %s in %d bays", launcherBySlot, wingId,
