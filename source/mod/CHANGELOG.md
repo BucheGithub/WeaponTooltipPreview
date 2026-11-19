@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 0.4.1 (2026-11-20)
+- Fast Rendering compatibility: previews now fill their background with a scissored quad instead of `glClear` and avoid synchronous OpenGL state queries that stalled the render thread.
+- Rendering performance optimizations: shield mipmaps are generated once per texture instead of every frame, previews render directly without screen copies when GraphicsLib shaders are off or absent, and GraphicsLib screen copies are restricted to the preview region rather than the full screen.
+
 ## Version 0.4.0 (2026-11-18)
 - Starsector 0.98.5a support.
 - GraphicsLib support: shaders, lighting and distortion render inside the preview, and GraphicsLib's toggle key works while a preview is shown.
