@@ -90,10 +90,23 @@ tasks.assemble {
     dependsOn(assembleMod)
 }
 
-// Copies the assembled mod folder into the game's mods folder.
+/** The id a mod_info.json declares (its first "id", which comes before any dependency's), or null without the file. */
+fun declaredModId(modInfo: File): String? =
+    if (modInfo.isFile) Regex("\"id\"\\s*:\\s*\"([^\"]+)\"").find(modInfo.readText())?.groupValues?.get(1) else null
+
+// Copies the assembled mod folder over the installed copy, found by mod id: TriOS names the folder itself (e.g.
+// "Weapon Tooltip Preview-0.4.0") and disables a mod's other versions by renaming their mod_info.json. A first install
+// creates mods/WeaponTooltipPreview.
 val deploy by tasks.registering(Sync::class) {
     group = "starsector"
     description = "Build and install the mod into the Starsector mods folder."
     from(assembleMod)
-    into(modsDir.resolve(modFolderName))
+    into(provider {
+        val modId = declaredModId(file("mod/mod_info.json")) ?: error("No \"id\" in mod/mod_info.json")
+        val installedCopies = modsDir.listFiles().orEmpty().filter { declaredModId(it.resolve("mod_info.json")) == modId }
+        check(installedCopies.size <= 1) {
+            "Several folders in $modsDir declare the mod id $modId: ${installedCopies.joinToString { it.name }}"
+        }
+        installedCopies.firstOrNull() ?: modsDir.resolve(modFolderName)
+    })
 }

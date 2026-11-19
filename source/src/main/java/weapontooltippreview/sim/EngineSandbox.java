@@ -10,22 +10,20 @@ import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatViewport;
 import com.fs.starfarer.title.TitleScreenState;
 import com.fs.state.AppDriver;
+import org.dark.shaders.util.ShaderHook;
+import org.dark.shaders.util.ShaderLib;
 import org.lwjgl.opengl.ARBFramebufferObject;
 import org.lwjgl.opengl.ContextCapabilities;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL14;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
-import org.dark.shaders.util.ShaderHook;
 import org.lwjgl.opengl.GLContext;
 import org.lwjgl.util.vector.Vector2f;
 import weapontooltippreview.Log;
 import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +40,9 @@ public final class EngineSandbox {
             CombatEngine.ANIMATION_GROUP};
     /** Plugins that take over the whole screen or the combat UI */
     private static final String[] STRIPPED_PLUGIN_PREFIXES = {"org.boxutil.", "org.luoxb.uiutil."};
+    private static final String GRAPHICSLIB_MOD_ID = "shaderLib";
+    private static final boolean GRAPHICSLIB_ENABLED =
+            Global.getSettings().getModManager().isModEnabled(GRAPHICSLIB_MOD_ID);
     /** The session entry CombatEngine.isSimulation() looks for.
      */
     private static final String SIMULATOR_SESSION_KEY = "run combat simulator";
@@ -51,11 +52,10 @@ public final class EngineSandbox {
     private static final String[] SHIELD_TEXTURES = {"graphics/fx/shields256.png", "graphics/fx/shields256ringd.png",
             "graphics/fx/shields128c.png", "graphics/fx/shields128ringc.png", "graphics/fx/shields64.png",
             "graphics/fx/shields64ring.png"};
+    /** Cached texture IDs of {@link #SHIELD_TEXTURES} once their mipmaps have been generated. */
+    private static final int[] SHIELD_TEXTURE_IDS = new int[SHIELD_TEXTURES.length];
     /** The engine's custom data key, followed by the ship id; nothing in the engine removes them. */
     private static final String NO_AI_FLAGS_KEY_PREFIX = "nonAI_SAIF_";
-    /** OpenGL capabilities the engine's renderers expect off */
-    private static final int[] CAPS_OFF = {GL11.GL_DEPTH_TEST, GL11.GL_ALPHA_TEST, GL11.GL_LIGHTING,
-            GL11.GL_CULL_FACE, GL11.GL_STENCIL_TEST, GL11.GL_FOG, GL11.GL_COLOR_LOGIC_OP, GL11.GL_SCISSOR_TEST};
     private static final float MAP_HALF_SIZE = 15000f;
     /** Scenes extend toward +x from their origin */
     private static final float SCENE_ORIGIN_X = -5000f;
@@ -80,6 +80,9 @@ public final class EngineSandbox {
     private int screenCopy;
     /** Texture holding the engine's render while the screen is put back; 0 until the first render. */
     private int sceneCopy;
+    /** Dimensions of the previous GraphicsLib render region, so shrinking views clear any leftover FBO pixels once. */
+    private int lastRenderWidth;
+    private int lastRenderHeight;
 
     private boolean swapped;
     private Object savedInstance;
@@ -267,10 +270,20 @@ public final class EngineSandbox {
 
     /** Whether render() can draw the views from one engine render */
     public static boolean fitsOneRender(View[] views, int count) {
+        if (!graphicsLibActive()) return true;
         float[] bounds = worldBounds(views, count);
         View first = views[0];
         return (bounds[2] - bounds[0]) * first.pixelWidth / first.worldWidth <= screenWidthPixels()
                 && (bounds[3] - bounds[1]) * first.pixelHeight / first.worldHeight <= screenHeightPixels();
+    }
+
+    /** True when GraphicsLib is installed and its combat shader pipeline is active. */
+    private static boolean graphicsLibActive() {
+        return GRAPHICSLIB_ENABLED && isGraphicsLibShaderActive();
+    }
+
+    private static boolean isGraphicsLibShaderActive() {
+        return ShaderHook.enableShaders && ShaderLib.areShadersAllowed();
     }
 
     /** The world rectangle (left, bottom, right, top) covering every view. */
@@ -289,38 +302,71 @@ public final class EngineSandbox {
     /**
      * Shows each view's rectangle of the world in its rectangle of screen pixels, then runs the overlay in each view,
      * scissored to it.
-     * The engine fills the whole screen because GraphicsLib's shaders assume it does.
-     * GraphicsLib ends its passes by binding framebuffer 0 itself, then reads the scene from there and draws its result there.
+     * When GraphicsLib shaders are off or absent, each view is rendered directly into its scissored viewport.
+     * When GraphicsLib shaders are active, the engine renders at (0, 0) with a full-screen viewport because GraphicsLib's
+     * FBO passes assume it does, but scissored and copied only across the sub-rectangle covered by the views.
      */
-    public void render(View[] views, int count, float[] clearRgb, Runnable worldOverlay) {
+    public void render(View[] views, int count, float[] backgroundRgb, Runnable worldOverlay) {
         requireSwapped();
 
-        boolean shaders = GLContext.getCapabilities().OpenGL20;
-        int previousProgram = shaders ? GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM) : 0;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        GL11.glPushClientAttrib(GL11.GL_ALL_CLIENT_ATTRIB_BITS);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
         GL11.glPushMatrix();
         GL11.glMatrixMode(GL11.GL_MODELVIEW);
         GL11.glPushMatrix();
         try {
-            resetFixedFunctionState();
-            int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
-            float[] bounds = worldBounds(views, count);
-            float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
-            float unitsPerPixelY = views[0].worldHeight / views[0].pixelHeight;
-            screenCopy = copyScreen(screenCopy);
-            aimCamera(0, 0, screenWidth, screenHeight, bounds[0], bounds[1], screenWidth * unitsPerPixelX,
-                    screenHeight * unitsPerPixelY);
-            GL11.glClearColor(clearRgb[0], clearRgb[1], clearRgb[2], 1f);
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-            GL11.glClearColor(0f, 0f, 0f, 0f);
-            setShieldMipmaps(true);
-            try {
-                engine.render(false);
-            } finally {
-                setShieldMipmaps(false);
-                restoreScreen(views, count, bounds[0], bounds[1], unitsPerPixelX, unitsPerPixelY);
+            if (!graphicsLibActive()) {
+                setShieldMipmaps(true);
+                try {
+                    GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                    for (int i = 0; i < count; i++) {
+                        View view = views[i];
+                        aimCamera(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight, view.worldX, view.worldY,
+                                view.worldWidth, view.worldHeight);
+                        GL11.glScissor(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight);
+                        fillBackground(backgroundRgb, view.worldX, view.worldY, view.worldWidth, view.worldHeight);
+                        engine.render(false);
+                    }
+                } finally {
+                    setShieldMipmaps(false);
+                }
+            } else {
+                int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
+                float[] bounds = worldBounds(views, count);
+                float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
+                float unitsPerPixelY = views[0].worldHeight / views[0].pixelHeight;
+                int renderWidth = 0, renderHeight = 0;
+                for (int i = 0; i < count; i++) {
+                    View view = views[i];
+                    renderWidth = Math.max(renderWidth,
+                            Math.round((view.worldX - bounds[0]) / unitsPerPixelX) + view.pixelWidth);
+                    renderHeight = Math.max(renderHeight,
+                            Math.round((view.worldY - bounds[1]) / unitsPerPixelY) + view.pixelHeight);
+                }
+                renderWidth = Math.min(screenWidth, Math.max(1, renderWidth));
+                renderHeight = Math.min(screenHeight, Math.max(1, renderHeight));
+                int dirtyWidth = Math.min(screenWidth, Math.max(renderWidth, lastRenderWidth));
+                int dirtyHeight = Math.min(screenHeight, Math.max(renderHeight, lastRenderHeight));
+                lastRenderWidth = renderWidth;
+                lastRenderHeight = renderHeight;
+
+                screenCopy = copyScreen(screenCopy, dirtyWidth, dirtyHeight);
+                aimCamera(0, 0, screenWidth, screenHeight, bounds[0], bounds[1], screenWidth * unitsPerPixelX,
+                        screenHeight * unitsPerPixelY);
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                GL11.glScissor(0, 0, dirtyWidth, dirtyHeight);
+                fillBackground(backgroundRgb, bounds[0], bounds[1], dirtyWidth * unitsPerPixelX,
+                        dirtyHeight * unitsPerPixelY);
+                // GraphicsLib clears its buffers with this colour, which combat also sets before its engine render.
+                GL11.glClearColor(0f, 0f, 0f, 0f);
+                setShieldMipmaps(true);
+                try {
+                    engine.render(false);
+                } finally {
+                    setShieldMipmaps(false);
+                    restoreScreen(views, count, bounds[0], bounds[1], unitsPerPixelX, unitsPerPixelY,
+                            renderWidth, renderHeight, dirtyWidth, dirtyHeight);
+                }
             }
             if (worldOverlay != null) {
                 for (int i = 0; i < count; i++) {
@@ -338,9 +384,7 @@ public final class EngineSandbox {
             GL11.glMatrixMode(GL11.GL_PROJECTION);
             GL11.glPopMatrix();
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            GL11.glPopClientAttrib();
             GL11.glPopAttrib();
-            if (shaders) GL20.glUseProgram(previousProgram);
         }
     }
 
@@ -367,66 +411,71 @@ public final class EngineSandbox {
         return (int) (Global.getSettings().getScreenHeightPixels() * Display.getPixelScaleFactor());
     }
 
-    /** Copies the screen into a texture. */
-    private static int copyScreen(int texture) {
-        int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-        int width = screenWidthPixels(), height = screenHeightPixels();
-        if (texture != 0) {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
-            GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
-        } else {
+    /** Copies the (0, 0, copyWidth, copyHeight) region of the screen into a screen-sized texture. */
+    private static int copyScreen(int texture, int copyWidth, int copyHeight) {
+        if (texture == 0) {
             texture = GL11.glGenTextures();
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
-            GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, 0, 0, width, height, 0);
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, screenWidthPixels(), screenHeightPixels(), 0,
+                    GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (ByteBuffer) null);
+        } else {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
         }
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
+        GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyWidth, copyHeight);
         return texture;
     }
 
-    /** Turns mipmapped filtering of the shield textures on or off. */
+    /** Turns mipmapped filtering of the shield textures on or off, generating mipmaps only once per texture ID. */
     private static void setShieldMipmaps(boolean on) {
         ContextCapabilities caps = GLContext.getCapabilities();
         if (!caps.OpenGL30 && !caps.GL_ARB_framebuffer_object) return;
-        for (String path : SHIELD_TEXTURES) {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, Global.getSettings().getSprite(path).getTextureId());
-            if (on) {
+        for (int i = 0; i < SHIELD_TEXTURES.length; i++) {
+            int id = on ? Global.getSettings().getSprite(SHIELD_TEXTURES[i]).getTextureId() : SHIELD_TEXTURE_IDS[i];
+            if (id == 0) continue;
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, id);
+            if (on && id != SHIELD_TEXTURE_IDS[i]) {
                 if (caps.OpenGL30) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);
                 else ARBFramebufferObject.glGenerateMipmap(GL11.GL_TEXTURE_2D);
+                SHIELD_TEXTURE_IDS[i] = id;
             }
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
                     on ? GL11.GL_LINEAR_MIPMAP_LINEAR : GL11.GL_LINEAR);
         }
     }
 
-    /** Puts screenCopy back, then draws each view's piece of the engine's render in its rectangle. */
+    /** Puts the modified region of screenCopy back, then draws each view's piece of the engine's render in its rectangle. */
     private void restoreScreen(View[] views, int count, float left, float bottom, float unitsPerPixelX,
-                               float unitsPerPixelY) {
+                               float unitsPerPixelY, int renderWidth, int renderHeight,
+                               int dirtyWidth, int dirtyHeight) {
         ContextCapabilities caps = GLContext.getCapabilities();
         if (caps.OpenGL30) {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
         } else if (caps.GL_ARB_framebuffer_object) {
             ARBFramebufferObject.glBindFramebuffer(ARBFramebufferObject.GL_FRAMEBUFFER, 0);
         }
-        resetFixedFunctionState();
-        int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
-        sceneCopy = copyScreen(sceneCopy);
-        int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_STENCIL_TEST);
         GL11.glDisable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glColorMask(true, true, true, true);
+        GL11.glColor4f(1f, 1f, 1f, 1f);
+        int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
+        sceneCopy = copyScreen(sceneCopy, renderWidth, renderHeight);
         GL11.glViewport(0, 0, screenWidth, screenHeight);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
         GL11.glLoadIdentity();
         GL11.glOrtho(0, screenWidth, 0, screenHeight, -1, 1);
         GL11.glMatrixMode(GL11.GL_MODELVIEW);
         GL11.glLoadIdentity();
-        drawScreenTexture(screenCopy, 0, 0, screenWidth, screenHeight, 0, 0);
+        drawScreenTexture(screenCopy, 0, 0, dirtyWidth, dirtyHeight, 0, 0);
         for (int i = 0; i < count; i++) {
             View view = views[i];
             drawScreenTexture(sceneCopy, view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight,
                     Math.round((view.worldX - left) / unitsPerPixelX), Math.round((view.worldY - bottom) / unitsPerPixelY));
         }
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         GL11.glEnable(GL11.GL_BLEND);
     }
 
@@ -448,25 +497,25 @@ public final class EngineSandbox {
         GL11.glEnd();
     }
 
-    /** Setting attributes for combat renderer. */
-    private static void resetFixedFunctionState() {
-        ContextCapabilities caps = GLContext.getCapabilities();
-        if (caps.OpenGL20) GL20.glUseProgram(0);
-        if (caps.OpenGL13) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0);
-            GL13.glClientActiveTexture(GL13.GL_TEXTURE0);
-        }
-        if (caps.OpenGL15) {
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
-        }
-        if (caps.OpenGL14) GL14.glBlendEquation(GL14.GL_FUNC_ADD);
-        GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
+    /**
+     * Paints a world rectangle in the background colour, then leaves texturing on and the colour white for the engine.
+     * A quad rather than glClear: Fast Rendering applies glEnable(GL_SCISSOR_TEST) only at its next draw, so a glClear
+     * right after it clears the whole screen. Unlike glClear, the quad goes through the alpha and stencil tests, which
+     * ship rendering leaves on between views.
+     */
+    private static void fillBackground(float[] rgb, float worldX, float worldY, float worldWidth, float worldHeight) {
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_BLEND);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_STENCIL_TEST);
+        GL11.glColor4f(rgb[0], rgb[1], rgb[2], 1f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(worldX, worldY);
+        GL11.glVertex2f(worldX + worldWidth, worldY);
+        GL11.glVertex2f(worldX + worldWidth, worldY + worldHeight);
+        GL11.glVertex2f(worldX, worldY + worldHeight);
+        GL11.glEnd();
         GL11.glEnable(GL11.GL_TEXTURE_2D);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        for (int cap : CAPS_OFF) GL11.glDisable(cap);
-        GL11.glColorMask(true, true, true, true);
         GL11.glColor4f(1f, 1f, 1f, 1f);
     }
 
@@ -480,6 +529,8 @@ public final class EngineSandbox {
             GL11.glDeleteTextures(sceneCopy);
             sceneCopy = 0;
         }
+        lastRenderWidth = 0;
+        lastRenderHeight = 0;
         swapIn();
         try {
             destroyWhileSwapped();

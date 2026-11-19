@@ -19,7 +19,7 @@ public final class WeaponTooltipPreviewSettings {
     }
 
     private static final String MOD_ID = "weapon_tooltip_preview";
-    private static final String DEFAULT_DUMMY_VARIANT_ID = "drover_Strike";
+    private static final String DEFAULT_DUMMY_VARIANT_ID = "gemini_Standard";
     /**
      * Radio option (as written in the CSV) → stock variant used as the dummy. Small carriers whose forward missile
      * slots are plain small or medium ones, so point defense previews can fill them all with missiles and wings.
