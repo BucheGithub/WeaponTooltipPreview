@@ -272,9 +272,8 @@ public final class EngineSandbox {
         public float worldX, worldY, worldWidth, worldHeight;
     }
 
-    /** Whether render() can draw the views from one engine render */
-    public static boolean fitsOneRender(View[] views, int count) {
-        if (!graphicsLibActive()) return true;
+    /** Whether render() can draw the views from one full-screen GraphicsLib engine render. */
+    private static boolean fitsOneRender(View[] views, int count) {
         float[] bounds = worldBounds(views, count);
         View first = views[0];
         return (bounds[2] - bounds[0]) * first.pixelWidth / first.worldWidth <= screenWidthPixels()
@@ -334,43 +333,10 @@ public final class EngineSandbox {
                 } finally {
                     setShieldMipmaps(false);
                 }
+            } else if (fitsOneRender(views, count)) {
+                renderGraphicsLibSinglePass(views, count, backgroundRgb);
             } else {
-                int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
-                float[] bounds = worldBounds(views, count);
-                float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
-                float unitsPerPixelY = views[0].worldHeight / views[0].pixelHeight;
-                int renderWidth = 0, renderHeight = 0;
-                for (int i = 0; i < count; i++) {
-                    View view = views[i];
-                    renderWidth = Math.max(renderWidth,
-                            Math.round((view.worldX - bounds[0]) / unitsPerPixelX) + view.pixelWidth);
-                    renderHeight = Math.max(renderHeight,
-                            Math.round((view.worldY - bounds[1]) / unitsPerPixelY) + view.pixelHeight);
-                }
-                renderWidth = Math.min(screenWidth, Math.max(1, renderWidth));
-                renderHeight = Math.min(screenHeight, Math.max(1, renderHeight));
-                int dirtyWidth = Math.min(screenWidth, Math.max(renderWidth, lastRenderWidth));
-                int dirtyHeight = Math.min(screenHeight, Math.max(renderHeight, lastRenderHeight));
-                lastRenderWidth = renderWidth;
-                lastRenderHeight = renderHeight;
-
-                screenCopy = copyScreen(screenCopy, dirtyWidth, dirtyHeight);
-                aimCamera(0, 0, screenWidth, screenHeight, bounds[0], bounds[1], screenWidth * unitsPerPixelX,
-                        screenHeight * unitsPerPixelY);
-                GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                GL11.glScissor(0, 0, dirtyWidth, dirtyHeight);
-                fillBackground(backgroundRgb, bounds[0], bounds[1], dirtyWidth * unitsPerPixelX,
-                        dirtyHeight * unitsPerPixelY);
-                // GraphicsLib clears its buffers with this colour, which combat also sets before its engine render.
-                GL11.glClearColor(0f, 0f, 0f, 0f);
-                setShieldMipmaps(true);
-                try {
-                    engine.render(false);
-                } finally {
-                    setShieldMipmaps(false);
-                    restoreScreen(views, count, bounds[0], bounds[1], unitsPerPixelX, unitsPerPixelY,
-                            renderWidth, renderHeight, dirtyWidth, dirtyHeight);
-                }
+                renderGraphicsLibMultiPass(views, count, backgroundRgb);
             }
             if (worldOverlay != null) {
                 for (int i = 0; i < count; i++) {
@@ -415,8 +381,8 @@ public final class EngineSandbox {
         return (int) (Global.getSettings().getScreenHeightPixels() * Display.getPixelScaleFactor());
     }
 
-    /** Copies the (0, 0, copyWidth, copyHeight) region of the screen into a screen-sized texture. */
-    private static int copyScreen(int texture, int copyWidth, int copyHeight) {
+    /** Copies the (0, 0, copyWidth, copyHeight) region of the screen into (dstX, 0) of a screen-sized texture. */
+    private static int copyScreen(int texture, int dstX, int copyWidth, int copyHeight) {
         if (texture == 0) {
             texture = GL11.glGenTextures();
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
@@ -427,7 +393,7 @@ public final class EngineSandbox {
         } else {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
         }
-        GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyWidth, copyHeight);
+        GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, dstX, 0, 0, 0, copyWidth, copyHeight);
         return texture;
     }
 
@@ -449,10 +415,108 @@ public final class EngineSandbox {
         }
     }
 
-    /** Puts the modified region of screenCopy back, then draws each view's piece of the engine's render in its rectangle. */
-    private void restoreScreen(View[] views, int count, float left, float bottom, float unitsPerPixelX,
-                               float unitsPerPixelY, int renderWidth, int renderHeight,
-                               int dirtyWidth, int dirtyHeight) {
+    /** Renders all views in one GraphicsLib engine pass when their combined world span fits on screen. */
+    private void renderGraphicsLibSinglePass(View[] views, int count, float[] backgroundRgb) {
+        int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
+        float[] bounds = worldBounds(views, count);
+        float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
+        float unitsPerPixelY = views[0].worldHeight / views[0].pixelHeight;
+        int renderWidth = 0, renderHeight = 0;
+        for (int i = 0; i < count; i++) {
+            View view = views[i];
+            renderWidth = Math.max(renderWidth,
+                    Math.round((view.worldX - bounds[0]) / unitsPerPixelX) + view.pixelWidth);
+            renderHeight = Math.max(renderHeight,
+                    Math.round((view.worldY - bounds[1]) / unitsPerPixelY) + view.pixelHeight);
+        }
+        renderWidth = Math.min(screenWidth, Math.max(1, renderWidth));
+        renderHeight = Math.min(screenHeight, Math.max(1, renderHeight));
+        int dirtyWidth = Math.min(screenWidth, Math.max(renderWidth, lastRenderWidth));
+        int dirtyHeight = Math.min(screenHeight, Math.max(renderHeight, lastRenderHeight));
+        lastRenderWidth = renderWidth;
+        lastRenderHeight = renderHeight;
+
+        screenCopy = copyScreen(screenCopy, 0, dirtyWidth, dirtyHeight);
+        aimCamera(0, 0, screenWidth, screenHeight, bounds[0], bounds[1], screenWidth * unitsPerPixelX,
+                screenHeight * unitsPerPixelY);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(0, 0, dirtyWidth, dirtyHeight);
+        fillBackground(backgroundRgb, bounds[0], bounds[1], dirtyWidth * unitsPerPixelX,
+                dirtyHeight * unitsPerPixelY);
+        // GraphicsLib clears its buffers with this colour, which combat also sets before its engine render.
+        GL11.glClearColor(0f, 0f, 0f, 0f);
+        setShieldMipmaps(true);
+        try {
+            engine.render(false);
+        } finally {
+            setShieldMipmaps(false);
+            prepareCompositeState();
+            sceneCopy = copyScreen(sceneCopy, 0, renderWidth, renderHeight);
+            int[] srcX = new int[count], srcY = new int[count];
+            for (int i = 0; i < count; i++) {
+                srcX[i] = Math.round((views[i].worldX - bounds[0]) / unitsPerPixelX);
+                srcY[i] = Math.round((views[i].worldY - bounds[1]) / unitsPerPixelY);
+            }
+            compositeScreen(views, count, srcX, srcY, dirtyWidth, dirtyHeight);
+        }
+    }
+
+    /**
+     * Renders each view separately at (0, 0) when their combined world span is wider than the screen (e.g. very long
+     * range split views), packing each rendered pane side-by-side into sceneCopy before restoring the screen once.
+     */
+    private void renderGraphicsLibMultiPass(View[] views, int count, float[] backgroundRgb) {
+        int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
+        int maxW = 1, maxH = 1;
+        for (int i = 0; i < count; i++) {
+            maxW = Math.max(maxW, views[i].pixelWidth);
+            maxH = Math.max(maxH, views[i].pixelHeight);
+        }
+        maxW = Math.min(screenWidth, maxW);
+        maxH = Math.min(screenHeight, maxH);
+        int dirtyWidth = Math.min(screenWidth, Math.max(maxW, lastRenderWidth));
+        int dirtyHeight = Math.min(screenHeight, Math.max(maxH, lastRenderHeight));
+        lastRenderWidth = maxW;
+        lastRenderHeight = maxH;
+
+        screenCopy = copyScreen(screenCopy, 0, dirtyWidth, dirtyHeight);
+        int[] srcX = new int[count], srcY = new int[count];
+        int dstX = 0, copied = 0;
+        setShieldMipmaps(true);
+        try {
+            for (int i = 0; i < count; i++) {
+                View view = views[i];
+                int copyW = Math.min(screenWidth - dstX, Math.min(screenWidth, view.pixelWidth));
+                int copyH = Math.min(screenHeight, view.pixelHeight);
+                if (copyW <= 0 || copyH <= 0) break;
+                int clearW = i == 0 ? dirtyWidth : copyW;
+                int clearH = i == 0 ? dirtyHeight : copyH;
+                float unitsPerPixelX = view.worldWidth / view.pixelWidth;
+                float unitsPerPixelY = view.worldHeight / view.pixelHeight;
+                aimCamera(0, 0, screenWidth, screenHeight, view.worldX, view.worldY, screenWidth * unitsPerPixelX,
+                        screenHeight * unitsPerPixelY);
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                GL11.glScissor(0, 0, clearW, clearH);
+                fillBackground(backgroundRgb, view.worldX, view.worldY, clearW * unitsPerPixelX,
+                        clearH * unitsPerPixelY);
+                GL11.glClearColor(0f, 0f, 0f, 0f);
+                engine.render(false);
+                prepareCompositeState();
+                sceneCopy = copyScreen(sceneCopy, dstX, copyW, copyH);
+                srcX[copied] = dstX;
+                srcY[copied] = 0;
+                dstX += copyW;
+                copied++;
+            }
+        } finally {
+            setShieldMipmaps(false);
+            prepareCompositeState();
+            compositeScreen(views, copied, srcX, srcY, dirtyWidth, dirtyHeight);
+        }
+    }
+
+    /** Binds the default framebuffer and sets plain opaque-textured quad state after GraphicsLib's render. */
+    private static void prepareCompositeState() {
         ContextCapabilities caps = GLContext.getCapabilities();
         if (caps.OpenGL30) {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
@@ -466,8 +530,11 @@ public final class EngineSandbox {
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glColorMask(true, true, true, true);
         GL11.glColor4f(1f, 1f, 1f, 1f);
+    }
+
+    /** Puts the modified region of screenCopy back, then draws each copied view from sceneCopy into its rectangle. */
+    private void compositeScreen(View[] views, int count, int[] srcX, int[] srcY, int dirtyWidth, int dirtyHeight) {
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
-        sceneCopy = copyScreen(sceneCopy, renderWidth, renderHeight);
         GL11.glViewport(0, 0, screenWidth, screenHeight);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
         GL11.glLoadIdentity();
@@ -477,8 +544,7 @@ public final class EngineSandbox {
         drawScreenTexture(screenCopy, 0, 0, dirtyWidth, dirtyHeight, 0, 0);
         for (int i = 0; i < count; i++) {
             View view = views[i];
-            drawScreenTexture(sceneCopy, view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight,
-                    Math.round((view.worldX - left) / unitsPerPixelX), Math.round((view.worldY - bottom) / unitsPerPixelY));
+            drawScreenTexture(sceneCopy, view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight, srcX[i], srcY[i]);
         }
         GL11.glEnable(GL11.GL_BLEND);
     }

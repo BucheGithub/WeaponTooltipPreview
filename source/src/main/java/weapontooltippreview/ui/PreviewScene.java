@@ -55,8 +55,10 @@ final class PreviewScene implements CustomUIPanelPlugin {
     private static final boolean GRAPHICSLIB_ENABLED =
             Global.getSettings().getModManager().isModEnabled(GRAPHICSLIB_MOD_ID);
 
-    /** Weapons and wings whose preview failed this game session. */
+    /** Weapons and wings whose preview threw an unexpected error this game session. */
     private static final Set<PreviewSubject> FAILED = new HashSet<>();
+    /** Weapons and wings that have no generic preview outside the refit screen (still allowed on their refit ship). */
+    private static final Set<PreviewSubject> NO_PREVIEW_OUTSIDE_REFIT = new HashSet<>();
     /** Shared HUD renderer: keeps sprites, wing icons and text buffers warm across hovers. */
     private static final PreviewHud HUD = new PreviewHud();
 
@@ -98,12 +100,13 @@ final class PreviewScene implements CustomUIPanelPlugin {
         this.refit = refit;
     }
 
-    static boolean hasFailed(PreviewSubject subject) {
-        return FAILED.contains(subject);
+    static boolean hasFailed(PreviewSubject subject, boolean inRefit) {
+        return FAILED.contains(subject) || (!inRefit && NO_PREVIEW_OUTSIDE_REFIT.contains(subject));
     }
 
     static void clearFailures() {
         FAILED.clear();
+        NO_PREVIEW_OUTSIDE_REFIT.clear();
     }
 
     /** Runs a throwaway scene while the game loads, so the first preview after it does not pay for building the engine. */
@@ -367,10 +370,8 @@ final class PreviewScene implements CustomUIPanelPlugin {
             right.worldY = s.dummyPosition.y - paneWorldH / 2f;
             placeInPixels(right);
 
-            // Both panes are cut from one render of the whole scene, which has to fit on the screen at their zoom;
-            // a scene too long for that is shown in one pane.
-            split = EngineSandbox.fitsOneRender(panes, paneCount);
-            if (split) return;
+            // Multi-pass rendering handles views whose combined span exceeds the screen width under GraphicsLib.
+            return;
         }
         float singleUnitsPerUi = Math.max(span / w, 2f * s.frameHalfHeight / h);
         paneCount = 1;
@@ -412,9 +413,13 @@ final class PreviewScene implements CustomUIPanelPlugin {
     /** An expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */
     private void fail(String what, Throwable t) {
         failed = true;
-        FAILED.add(subject);
-        if (t != null) Log.error("tooltip #" + tooltipId + " (" + subject + "): " + what, t);
-        else Log.info("no preview for %s: %s", subject, what);
+        if (t != null) {
+            FAILED.add(subject);
+            Log.error("tooltip #" + tooltipId + " (" + subject + "): " + what, t);
+        } else {
+            if (refit == null) NO_PREVIEW_OUTSIDE_REFIT.add(subject);
+            Log.info("no preview for %s: %s", subject, what);
+        }
         endScene(t != null);
         if (statusLine != null) statusLine.setOpacity(1f);
         if (threatHint != null) threatHint.setOpacity(0f);

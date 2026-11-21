@@ -8,18 +8,22 @@ import com.fs.starfarer.api.combat.FighterWingAPI;
 import com.fs.starfarer.api.combat.MissileAPI;
 import com.fs.starfarer.api.combat.MutableShipStatsAPI;
 import com.fs.starfarer.api.combat.ShipAPI;
+import com.fs.starfarer.api.combat.ShipSystemAPI;
 import com.fs.starfarer.api.combat.WeaponAPI;
 import com.fs.starfarer.api.combat.WeaponAPI.AIHints;
 import com.fs.starfarer.api.impl.campaign.ids.Tags;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
+import com.fs.starfarer.api.loading.WeaponSpecAPI;
 import com.fs.starfarer.api.util.Misc;
 import org.lazywizard.lazylib.MathUtils;
 import org.lazywizard.lazylib.VectorUtils;
 import org.lazywizard.lazylib.combat.AIUtils;
 import org.lazywizard.lazylib.combat.CombatUtils;
 import org.lwjgl.util.vector.Vector2f;
+import weapontooltippreview.Log;
 
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * The ship showing the previewed weapon, or the previewed wing.
@@ -40,6 +44,12 @@ public final class WeaponHost {
     private static final float SIGHT_FLAT = 8500f;
     private static final float AIM_TOLERANCE_DEGREES = 2f;
     private static final float THREAT_RANGE_FACTOR = 1.25f;
+    /** How long a lined-up weapon may fail to fire before trying the ship's system (catches system-gated weapons with no text hint). */
+    private static final float SYSTEM_STALL_SECONDS = 0.35f;
+    /** Cap on ship system cooldown while demonstrating a system-gated weapon, so previews do not sit idle between bursts. */
+    private static final float MAX_SYSTEM_COOLDOWN = 1.5f;
+    private static final Pattern SYSTEM_GATE_PATTERN =
+            Pattern.compile("(?i)\\b(?:ship\\s*system|system\\s+(?:activation|is\\s+active|is\\s+at|active))\\b");
 
     private final CombatEngineAPI engine;
     private final ShipAPI ship;
@@ -49,12 +59,22 @@ public final class WeaponHost {
     private final FighterWingSpecAPI wing;
     /** Where the ship comes from (refit copy, generic hull...), for the logs. */
     private final String source;
+    /** Spawn anchor kept when a ship system is activated so movement systems cannot push the host out of frame. */
+    private final Vector2f anchor;
+    private final float anchorFacing;
     /** Point defense: engages the dummy's missiles and fighters before the dummy. */
     private final boolean pointDefense;
     /** Engages fighters before missiles. */
     private final boolean antiFighter;
     /** The wing's engagement range is 0: it escorts the carrier instead of flying out to the dummy. */
     private final boolean escorts;
+    /** True when tooltip metadata explicitly indicates this weapon is gated by the ship system. */
+    private final boolean systemHinted;
+    /** Activates and cycles the ship system so system-gated weapons (Merrow, Ristreza, etc.) can fire. */
+    private boolean useShipSystem;
+    private boolean hasEverFired;
+    private boolean systemWasActive;
+    private float blockedFireTime;
 
     WeaponHost(CombatEngineAPI engine, ShipAPI ship, WeaponAPI weapon, FighterWingSpecAPI wing, String source) {
         this.engine = engine;
@@ -62,6 +82,8 @@ public final class WeaponHost {
         this.weapon = weapon;
         this.wing = wing;
         this.source = source;
+        this.anchor = new Vector2f(ship.getLocation());
+        this.anchorFacing = ship.getFacing();
         MutableShipStatsAPI stats = ship.getMutableStats();
         stats.getHullDamageTakenMult().modifyMult(Scenario.PREVIEW_SOURCE_ID, DAMAGE_MULT);
         stats.getArmorDamageTakenMult().modifyMult(Scenario.PREVIEW_SOURCE_ID, ARMOR_MULT);
@@ -77,6 +99,8 @@ public final class WeaponHost {
         pointDefense = weapon != null && ThreatSelection.isPointDefense(weapon.getSpec());
         antiFighter = weapon != null && weapon.getSpec().getAIHints().contains(AIHints.ANTI_FTR);
         escorts = wing != null && engagementRange() < 1f;
+        systemHinted = weapon != null && ship.getSystem() != null && isSystemGatedByHint(weapon);
+        useShipSystem = systemHinted;
     }
 
     public ShipAPI ship() {
@@ -108,6 +132,10 @@ public final class WeaponHost {
         ship.getFluxTracker().setHardFlux(0f);
         ship.getFluxTracker().setCurrFlux(0f);
         if (weapon != null) {
+            if (weapon.isFiring() || weapon.getChargeLevel() > 0f || weapon.getCooldownRemaining() > 0f) {
+                hasEverFired = true;
+            }
+            if (useShipSystem) maintainShipSystem();
             aimAndFire(dt, dummy);
             return;
         }
@@ -117,7 +145,7 @@ public final class WeaponHost {
 
     /** A weapon that cannot reload has fired its whole magazine, and its last shot is gone. */
     boolean magazineSpent() {
-        if (weapon == null || !weapon.usesAmmo() || weapon.getAmmo() > 0
+        if (weapon == null || useShipSystem || !weapon.usesAmmo() || weapon.getAmmo() > 0
                 || weapon.getAmmoTracker().getAmmoPerSecond() > 0f) {
             return false;
         }
@@ -184,7 +212,55 @@ public final class WeaponHost {
         float current = weapon.getCurrAngle();
         weapon.setCurrAngle(current + MathUtils.clamp(MathUtils.getShortestRotation(current, desired), -maxTurn, maxTurn));
         boolean linedUp = weapon.getTurnRate() <= 0f || Misc.getAngleDiff(weapon.getCurrAngle(), desired) < tolerance;
-        if (mayFire && linedUp) weapon.setForceFireOneFrame(true);
+        if (mayFire && linedUp) {
+            weapon.setForceFireOneFrame(true);
+            if (!hasEverFired && !useShipSystem && ship.getSystem() != null) {
+                blockedFireTime += dt;
+                if (blockedFireTime >= SYSTEM_STALL_SECONDS) {
+                    useShipSystem = true;
+                    Log.info("%s did not fire after %.2fs; activating ship system %s", weapon.getId(), blockedFireTime,
+                            ship.getSystem().getId());
+                }
+            }
+        }
+    }
+
+    /** Keeps the host pinned in place and cycles its ship system for system-gated weapons. */
+    private void maintainShipSystem() {
+        ship.getLocation().set(anchor);
+        ship.setFacing(anchorFacing);
+        ShipSystemAPI system = ship.getSystem();
+        if (system == null) {
+            useShipSystem = false;
+            return;
+        }
+        if (system.isStateActive() || system.isChargeup()) {
+            systemWasActive = true;
+            return;
+        }
+        if (system.isChargedown()) return;
+        // Behavioral probe only: if a full system cycle did not unblock the weapon, stop triggering it.
+        if (systemWasActive && !hasEverFired && !systemHinted) {
+            useShipSystem = false;
+            return;
+        }
+        if (system.isOutOfAmmo() && system.getMaxAmmo() > 0) system.setAmmo(system.getMaxAmmo());
+        if (system.getCooldownRemaining() > MAX_SYSTEM_COOLDOWN) system.setCooldownRemaining(MAX_SYSTEM_COOLDOWN);
+        if (system.getState() == ShipSystemAPI.SystemState.IDLE && system.canBeActivated()) {
+            ship.useSystem();
+        }
+    }
+
+    private static boolean isSystemGatedByHint(WeaponAPI weapon) {
+        WeaponSpecAPI spec = weapon.getSpec();
+        boolean specialMount = weapon.getSlot().isBuiltIn() || weapon.getSlot().isSystemSlot()
+                || spec.getAIHints().contains(AIHints.SYSTEM);
+        if (!specialMount) return false;
+        return matchesSystemGate(spec.getCustomPrimary()) || matchesSystemGate(spec.getCustomAncillary());
+    }
+
+    private static boolean matchesSystemGate(String text) {
+        return text != null && SYSTEM_GATE_PATTERN.matcher(text).find();
     }
 
     /** Where to aim to meet a moving entity with this weapon's shots. */

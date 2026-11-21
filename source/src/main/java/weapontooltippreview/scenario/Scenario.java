@@ -34,6 +34,8 @@ public final class Scenario {
 
     /** How far the range arc cuts into the target's shield bubble, as a fraction of the shield radius. */
     private static final float RANGE_OVERLAP = 0.65f;
+    /** Minimum range used to place the dummy, so zero- or melee-range weapons do not overlap the ships. */
+    private static final float MIN_WEAPON_RANGE = 250f;
     /** Weapons reaching this far may show as a split view; shorter ones are framed at true scale in one pane. */
     private static final float SPLIT_VIEW_MIN_RANGE = 2000f;
 
@@ -69,7 +71,8 @@ public final class Scenario {
             boolean drifts = tracks(weapon.getSpec());
             Vector2f mount = weapon.getSlot().computePosition(weaponHost.ship());
             float shieldRadius = TargetDummy.shieldRadius(dummyVariant.getHullSpec());
-            dummyPosition = new Vector2f(mount.x + weapon.getRange() + shieldRadius * (1f - RANGE_OVERLAP), mount.y);
+            float previewRange = Math.max(weapon.getRange(), MIN_WEAPON_RANGE);
+            dummyPosition = new Vector2f(mount.x + previewRange + shieldRadius * (1f - RANGE_OVERLAP), mount.y);
             targetDummy = new TargetDummy(engine, weaponHost.ship(), dummyVariant, dummyPosition, drifts,
                     weaponHost.pointDefense() ? TargetDummy.Loadout.THREATS : TargetDummy.Loadout.NONE);
             frameScene(0f, drifts ? TargetDummy.DRIFT_AMPLITUDE : 0f);

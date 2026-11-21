@@ -1,5 +1,13 @@
 # Changelog
 
+## Version 0.4.2 (2026-11-21)
+- Ultra-long-range split views under GraphicsLib: weapons whose split-view span exceeds the screen width (such as 10,000-range missiles) now render each pane in its own scissored pass instead of falling back to single-pane view.
+- Generalized required hullmods on generic hosts: weapons that declare a required hullmod in their tooltip data (such as Threat's Fragment Swarm or Nightcross Armory's Stardust Nebula) automatically equip that hullmod on generic previews while leaving refit ships as fitted.
+- System-gated weapons: weapons that require the ship's system to be active to fire (such as Merrow's Abyssal Wave Emitter or Ristreza's Gleipnir) now automatically activate and cycle the ship's system while keeping the ship pinned in place.
+- Hydrofoil compatibility: stripped Hydrofoil's combat plugin from the preview engine so previews no longer trigger its post-battle cleanup crash in the campaign.
+- Fixed previews for built-in and hullmod-swapped weapons (such as Caymon's Ship Pack arm weapons) that carry the `SYSTEM` AI hint, and added a 250-unit minimum dummy distance so zero- or melee-range weapons do not overlap the dummy.
+- "Enable previews" toggle in LunaLib settings: turned off, weapon and wing tooltips show no preview, and no preview engine is built when a save loads.
+
 ## Version 0.4.1 (2026-11-20)
 - Fast Rendering compatibility: previews now fill their background with a scissored quad instead of `glClear` and avoid synchronous OpenGL state queries that stalled the render thread.
 - Rendering performance optimizations: shield mipmaps are generated once per texture instead of every frame, previews render directly without screen copies when GraphicsLib shaders are off or absent, and GraphicsLib screen copies are restricted to the preview region rather than the full screen.

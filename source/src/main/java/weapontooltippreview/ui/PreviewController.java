@@ -5,6 +5,7 @@ import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.listeners.CampaignInputListener;
 import com.fs.starfarer.api.input.InputEventAPI;
 import weapontooltippreview.Log;
+import weapontooltippreview.WeaponTooltipPreviewSettings;
 import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.sim.EngineSandbox;
 
@@ -22,7 +23,10 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     private final Set<String> loggedErrors = new HashSet<>();
     private int errors;
 
-    /** Resets per-session state, registers the campaign controller, and prewarms the shared preview engine. */
+    /**
+     * Resets per-session state, registers the campaign controller, and prewarms the shared preview engine while
+     * previews are on. The controller is registered either way, so switching previews on mid-game works at once.
+     */
     public static void onGameLoad() {
         PreviewScene.clearFailures();
         EngineSandbox.reset();
@@ -30,7 +34,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
         PreviewController controller = new PreviewController();
         Global.getSector().addTransientScript(controller);
         Global.getSector().getListenerManager().addListener(controller, true);
-        PreviewScene.prewarm();
+        if (WeaponTooltipPreviewSettings.previewsEnabled()) PreviewScene.prewarm();
     }
 
     @Override

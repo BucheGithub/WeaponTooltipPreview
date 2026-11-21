@@ -17,6 +17,7 @@ import com.fs.starfarer.api.util.Misc;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.starfarer.ui.impl.StandardTooltipV2Expandable;
 import weapontooltippreview.Log;
+import weapontooltippreview.WeaponTooltipPreviewSettings;
 import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.scenario.PreviewSubject;
@@ -143,7 +144,7 @@ final class TooltipWatcher {
         CustomPanelAPI panel = s.injected != null ? s.injected.get() : null;
         if (panel == null || !isDescendant(tip, panel, 6)) {
             if (s.injected != null) Log.info("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
-            if (EngineSandbox.isDisabled() || PreviewScene.hasFailed(s.subject)) {
+            if (noPreviewFor(s.subject)) {
                 enforcePlacement(tip, s);
                 return s;
             }
@@ -165,7 +166,7 @@ final class TooltipWatcher {
         s.subject = subjectOf(tip);
         s.injected = null;
         Log.info("tooltip #%d turned to page %d: %s", s.id, page, s.subject);
-        if (EngineSandbox.isDisabled() || PreviewScene.hasFailed(s.subject)) {
+        if (noPreviewFor(s.subject)) {
             disposePreview(s);
             placeOnScreen(tip, s, top, hintOverhang(tip));
             return;
@@ -195,6 +196,12 @@ final class TooltipWatcher {
         if (!(spec instanceof FighterWingSpecAPI)) return null;
         FighterWingSpecAPI wing = (FighterWingSpecAPI) spec;
         return new PreviewSubject(weaponOnPage(tip), wing.getId());
+    }
+
+    /** Previews switched off in the settings, the engine given up on, or this weapon's or wing's preview failed. */
+    private static boolean noPreviewFor(PreviewSubject subject) {
+        return !WeaponTooltipPreviewSettings.previewsEnabled() || EngineSandbox.isDisabled()
+                || PreviewScene.hasFailed(subject, inRefit());
     }
 
     /** The page's weapon. */
@@ -267,8 +274,7 @@ final class TooltipWatcher {
     private CustomPanelAPI newPreview(Object tip, TipState s, float width) {
         // One live engine at a time: any other preview belongs to a tooltip that is gone or going.
         disposeActive();
-        RefitShip refit = Global.getSector().getCampaignUI().getCurrentCoreTab() == CoreUITabId.REFIT
-                ? RefitLookup.find(tip) : null;
+        RefitShip refit = inRefit() ? RefitLookup.find(tip) : null;
         PreviewScene preview = new PreviewScene(s.id, s.subject, refit);
         s.preview = preview;
         activePreview = preview;
@@ -350,6 +356,10 @@ final class TooltipWatcher {
             if (isDescendant(c, node, maxDepth - 1)) return true;
         }
         return false;
+    }
+
+    private static boolean inRefit() {
+        return Global.getSector().getCampaignUI().getCurrentCoreTab() == CoreUITabId.REFIT;
     }
 
     private static float top(UIComponentAPI c) {
