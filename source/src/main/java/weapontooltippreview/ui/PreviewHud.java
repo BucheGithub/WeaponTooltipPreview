@@ -474,11 +474,11 @@ final class PreviewHud {
         }
     }
 
-    /** Upper-case display name, cut to fit (measured once per weapon). */
+    /** Lower-case display name (victor10 is all-caps and packs accented glyphs on lower-case code points, matching vanilla), cut to fit. */
     private String weaponName(LazyFont f, WeaponAPI weapon, float maxW) {
         String id = weapon.getId() + "@" + Math.round(maxW);
         if (!id.equals(weaponNameFor)) {
-            String name = weapon.getDisplayName().toUpperCase(Locale.ROOT);
+            String name = weapon.getDisplayName().toLowerCase(Locale.ROOT);
             while (name.length() > 4 && f.calcWidth(name, f.getBaseHeight()) > maxW) {
                 name = name.substring(0, name.length() - 2) + ".";
             }

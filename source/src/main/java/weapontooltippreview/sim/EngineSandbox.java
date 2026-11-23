@@ -38,11 +38,13 @@ public final class EngineSandbox {
     /** The engine's animation groups, in the order the combat state advances them */
     private static final String[] ANIMATION_GROUPS = {CombatEngine.ANIMATION_GROUP_NONPAUSABLE,
             CombatEngine.ANIMATION_GROUP};
-    /** Plugins that take over the whole screen, the combat UI, or campaign post-battle cleanup */
+    /** Plugins that take over the whole screen, the combat UI, camera/input, or campaign post-battle tracking/cleanup */
     private static final String[] STRIPPED_PLUGIN_PREFIXES = {
             "org.boxutil.",
             "org.luoxb.uiutil.",
             "data.scripts.combat.hydrofoil.",
+            "data.scripts.plugins.RTSAssist",
+            "data.scripts.plugins.DamageDetectionEveryFrameCombatPlugin",
     };
     private static final String GRAPHICSLIB_MOD_ID = "shaderLib";
     private static final boolean GRAPHICSLIB_ENABLED =
