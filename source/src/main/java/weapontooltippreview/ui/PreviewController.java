@@ -30,7 +30,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
      * previews are on. The controller is registered either way, so switching previews on mid-game works at once.
      */
     public static void onGameLoad() {
-        CodexWatcher.shared().disposeAll();
+        CodexWatcher.shared().reset();
         PreviewScene.clearFailures();
         EngineSandbox.reset();
         if (!StarfarerBridge.isReady()) return;
@@ -69,7 +69,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
             if (errors >= MAX_ERRORS) {
                 Log.error("preview disabled after " + errors + " errors");
                 tooltips.disposeAll();
-                codex.disposeAll();
+                codex.reset();
                 EngineSandbox.discard("controller disabled");
             }
         }
@@ -82,7 +82,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
 
     @Override
     public void reportClosedCodex() {
-        codex.disposeAll();
+        codex.reset();
     }
 
     @Override

@@ -64,7 +64,6 @@ final class PreviewHud {
     private static final Color ENEMY = settingsColor("textEnemyColor", new Color(255, 100, 0));
     private static final Color FRIEND = settingsColor("textFriendColor", new Color(155, 255, 0));
     private static final Color NOISE_COLOR = settingsColor("noiseColor", new Color(40, 152, 176));
-    private static final String NOISE_PATH = "graphics/fx/noise.png";
     private static final float STATIC_FPS = 28f;
     private static final int STATIC_GLITCH_BARS = 3;
 
@@ -142,11 +141,6 @@ final class PreviewHud {
         GL11.glPopAttrib();
     }
 
-    /** Corner brackets around the scene and (when shown) the threat hint bar below it. */
-    void drawFrame(float x, float y, float w, float h, boolean threatHint, float hintY, float hintH, float alpha) {
-        drawFrame(x, y, w, h, threatHint ? alpha : 0f, hintY, hintH, alpha);
-    }
-
     /** Corner brackets around the scene and (with hintAlpha > 0) the threat hint bar below it. */
     void drawFrame(float x, float y, float w, float h, float hintAlpha, float hintY, float hintH, float alpha) {
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_LINE_BIT);
@@ -160,8 +154,8 @@ final class PreviewHud {
 
     /**
      * Signal-static overlay shown while the preview box expands and locks onto a feed.
-     * Uses Starsector's own UI noise texture (tiled in [0, 1] UVs without mutating wrap state), scanlines, and
-     * flickering horizontal sync bands, with a procedural fallback if the texture is unavailable.
+     * Uses Starsector's preloaded {@code ui/noise} sprite (tiled in [0, 1] UVs without mutating wrap state),
+     * scanlines, and flickering horizontal sync bands.
      */
     void drawStatic(float x, float y, float w, float h, float intensity, float elapsed, float alpha) {
         float a = MathUtils.clamp(intensity, 0f, 1f) * alpha;
@@ -210,20 +204,6 @@ final class PreviewHud {
                     py += dy;
                 }
                 GL11.glEnd();
-            } else {
-                GL11.glDisable(GL11.GL_TEXTURE_2D);
-                GL11.glBegin(GL11.GL_QUADS);
-                int row = 0;
-                for (float sy = y; sy < y + h; sy += 3f, row++) {
-                    float sh = Math.min(2f, y + h - sy);
-                    float lum = 0.15f + 0.45f * hash(step * 97 + row * 13);
-                    GL11.glColor4f(nr, ng, nb, lum * a);
-                    GL11.glVertex2f(x, sy);
-                    GL11.glVertex2f(x + w, sy);
-                    GL11.glVertex2f(x + w, sy + sh);
-                    GL11.glVertex2f(x, sy + sh);
-                }
-                GL11.glEnd();
             }
 
             // Dark scanlines over the noise.
@@ -267,17 +247,9 @@ final class PreviewHud {
         noiseLoaded = true;
         try {
             noiseSprite = Global.getSettings().getSprite("ui", "noise");
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
             noiseSprite = null;
-        }
-        if (noiseSprite == null || noiseSprite.getTextureId() == 0) {
-            try {
-                Global.getSettings().loadTexture(NOISE_PATH);
-                noiseSprite = Global.getSettings().getSprite(NOISE_PATH);
-            } catch (IOException | RuntimeException e) {
-                noiseSprite = null;
-                Log.info("no static noise texture: %s", e);
-            }
+            Log.info("no static noise texture: %s", e);
         }
     }
 
@@ -865,7 +837,7 @@ final class PreviewHud {
         hullSprite = null;
     }
 
-    /** Loads the readouts' font ahead of the first preview (see PreviewSession.prewarm). */
+    /** Loads the readouts' font ahead of the first preview (see PreviewScene.prewarm). */
     static void loadFont() {
         font();
     }

@@ -6,14 +6,12 @@ import com.fs.starfarer.api.campaign.CoreUITabId;
 import com.fs.starfarer.api.input.InputEventAPI;
 import com.fs.starfarer.api.loading.FighterWingSpecAPI;
 import com.fs.starfarer.api.loading.WeaponSpecAPI;
-import com.fs.starfarer.api.ui.Alignment;
 import com.fs.starfarer.api.ui.CustomPanelAPI;
 import com.fs.starfarer.api.ui.LabelAPI;
 import com.fs.starfarer.api.ui.PositionAPI;
 import com.fs.starfarer.api.ui.TooltipMakerAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
 import com.fs.starfarer.api.ui.UIPanelAPI;
-import com.fs.starfarer.api.util.Misc;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.starfarer.ui.impl.StandardTooltipV2Expandable;
 import weapontooltippreview.Log;
@@ -22,12 +20,10 @@ import weapontooltippreview.bridge.Refl;
 import weapontooltippreview.bridge.StarfarerBridge;
 import weapontooltippreview.scenario.PreviewSubject;
 import weapontooltippreview.scenario.RefitShip;
-import weapontooltippreview.scenario.ThreatSelection;
 import weapontooltippreview.sim.EngineSandbox;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -35,13 +31,8 @@ import java.util.WeakHashMap;
 /** Finds live weapon and fighter LPC tooltips and injects the preview panel between the description and the weapon or wing data, growing the tooltip downward. */
 final class TooltipWatcher {
 
-    private static final float PREVIEW_HEIGHT = 150f;
     private static final float GAP = 6f;
     private static final float SCREEN_MARGIN = 4f;
-    private static final float STATUS_LINE_HEIGHT = 20f;
-    private static final float EXPAND_DURATION = 0.18f;
-    private static final float MIN_EXPAND_HEIGHT = 2f;
-    private static final int SCAN_DEPTH = 2;
 
     /** Expansion state for an injected preview panel. All layout mutations use incremental deltas so other tooltip mods stay intact. */
     private static final class InjectionLayout {
@@ -73,6 +64,8 @@ final class TooltipWatcher {
         float hoverElapsed;
         /** True once this hover has passed the delay and opened its preview. */
         boolean opened;
+        /** True when this tooltip had no injection anchor so we do not retry/log every frame. */
+        boolean uninjectable;
         /** Weak: the panel's parents lead back to the tooltip, the key this state is stored under, so a strong reference would keep the tooltip and the whole UI around it alive for good. The tooltip itself holds the panel. */
         WeakReference<CustomPanelAPI> injected;
         InjectionLayout layout;
@@ -151,6 +144,7 @@ final class TooltipWatcher {
         s.visible = false;
         s.hoverElapsed = 0f;
         s.opened = false;
+        s.uninjectable = false;
         disposePreview(s);
         uninject(tip, s);
     }
@@ -166,7 +160,7 @@ final class TooltipWatcher {
 
         if (layout != null) {
             UIPanelAPI parent = layout.parent.get();
-            if (parent != null && panel != null && isDescendant(parent, panel, 1)) {
+            if (parent != null && panel != null && PreviewScene.isDescendant(parent, panel, 1)) {
                 float panelTop = top(panel);
                 parent.removeComponent(panel);
                 applyLayoutDelta(tip, parent, null, panelTop, -layout.appliedShift, 0f);
@@ -187,8 +181,8 @@ final class TooltipWatcher {
             if (!found.contains(tip)) found.add(tip);
             return;
         }
-        if (depth >= SCAN_DEPTH) return;
-        for (Object c : children(node)) scan(c, depth + 1);
+        if (depth >= PreviewScene.SCAN_DEPTH) return;
+        for (Object c : PreviewScene.children(node)) scan(c, depth + 1);
     }
 
     private TipState handle(StandardTooltipV2 tip, float dt) {
@@ -206,6 +200,7 @@ final class TooltipWatcher {
                 s.visible = true;
                 s.hoverElapsed = 0f;
                 s.opened = false;
+                s.uninjectable = false;
             }
         }
         if (s.subject == null || !visibleNow) return s;
@@ -216,7 +211,8 @@ final class TooltipWatcher {
         }
 
         CustomPanelAPI panel = s.injected != null ? s.injected.get() : null;
-        if (panel == null || !isDescendant(tip, panel, 6)) {
+        if (panel == null || !PreviewScene.isDescendant(tip, panel, 6)) {
+            if (s.uninjectable) return s;
             if (s.injected != null) {
                 Log.info("tooltip #%d lost its preview panel (rebuilt); re-injecting", s.id);
                 s.injected = null;
@@ -263,6 +259,7 @@ final class TooltipWatcher {
         s.subject = subjectOf(tip);
         s.injected = null;
         s.layout = null;
+        s.uninjectable = false;
         Log.info("tooltip #%d turned to page %d: %s", s.id, page, s.subject);
         if (noPreviewFor(s.subject)) {
             disposePreview(s);
@@ -333,6 +330,7 @@ final class TooltipWatcher {
         UIPanelAPI parent = (UIPanelAPI) StarfarerBridge.tooltipContents.invoke(tip);
         UIComponentAPI data = firstNonLabel(parent);
         if (data == null) {
+            s.uninjectable = true;
             Log.info("tooltip #%d: no data below the description, cannot inject", s.id);
             return;
         }
@@ -366,7 +364,7 @@ final class TooltipWatcher {
 
     private static void advanceExpansion(UIComponentAPI tip, TipState s, CustomPanelAPI panel, float dt) {
         InjectionLayout layout = s.layout;
-        layout.progress = Math.min(1f, layout.progress + dt / EXPAND_DURATION);
+        layout.progress = Math.min(1f, layout.progress + dt / PreviewScene.EXPAND_DURATION);
         applyExpansion(tip, s, panel, layout, layout.progress);
         if (layout.progress >= 1f && s.preview != null) {
             s.preview.finishExpanding();
@@ -378,11 +376,10 @@ final class TooltipWatcher {
         UIPanelAPI parent = layout.parent.get();
         if (parent == null) return;
         float t = Math.max(0f, Math.min(1f, progress));
-        float inv = 1f - t;
-        float ease = 1f - inv * inv * inv;
-        float nextShift = t >= 1f ? layout.targetShift : Math.max(MIN_EXPAND_HEIGHT, layout.targetShift * ease);
+        float ease = PreviewScene.easeOutCubic(t);
+        float nextShift = t >= 1f ? layout.targetShift : Math.max(PreviewScene.MIN_EXPAND_HEIGHT, layout.targetShift * ease);
         float nextPanelH = t >= 1f ? layout.targetPanelHeight
-                : Math.max(MIN_EXPAND_HEIGHT, Math.min(layout.targetPanelHeight, nextShift - GAP * ease));
+                : Math.max(PreviewScene.MIN_EXPAND_HEIGHT, Math.min(layout.targetPanelHeight, nextShift - GAP * ease));
         float delta = nextShift - layout.appliedShift;
         layout.appliedShift = nextShift;
 
@@ -407,9 +404,9 @@ final class TooltipWatcher {
         }
 
         if (Math.abs(delta) >= 0.001f) {
-            for (Object c : children(parent)) {
-                if (!(c instanceof UIComponentAPI) || c == panel) continue;
-                PositionAPI cp = ((UIComponentAPI) c).getPosition();
+            for (UIComponentAPI c : PreviewScene.children(parent)) {
+                if (c == panel) continue;
+                PositionAPI cp = c.getPosition();
                 float cTop = cp.getY() + cp.getHeight();
                 if (cTop <= splitTop + 0.5f) {
                     cp.inTL(cp.getX() - parentLeft, Math.max(0f, parentTop - cTop + delta));
@@ -436,25 +433,16 @@ final class TooltipWatcher {
         // One live engine at a time: any other preview belongs to a tooltip that is gone or going.
         disposeActive();
         RefitShip refit = inRefit() ? RefitLookup.find(tip) : null;
-        PreviewScene preview = new PreviewScene(s.id, s.subject, refit, PREVIEW_HEIGHT, opening);
+        PreviewScene preview = new PreviewScene(s.id, s.subject, refit, PreviewScene.PREVIEW_HEIGHT, opening);
         s.preview = preview;
         activePreview = preview;
-        boolean threatHint = ThreatSelection.appliesTo(s.subject);
-        CustomPanelAPI panel = Global.getSettings().createCustom(width,
-                PREVIEW_HEIGHT + (threatHint ? PreviewScene.THREAT_HINT_HEIGHT : 0f), preview);
-        TooltipMakerAPI status = panel.createUIElement(width, STATUS_LINE_HEIGHT, false);
-        LabelAPI line = status.addPara("Preview unavailable", Misc.getGrayColor(), 0f);
-        line.setAlignment(Alignment.MID);
-        panel.addUIElement(status).inTL(0f, (PREVIEW_HEIGHT - STATUS_LINE_HEIGHT) / 2f);
-        preview.setStatusLine(status);
-        if (threatHint) preview.addThreatHint(panel);
-        return panel;
+        return preview.createPanel(width);
     }
 
     /** How far the "F2 open Codex" line hangs below the tooltip's frame; 0 without one. */
     private static float hintOverhang(UIComponentAPI tip) {
         Object label = StarfarerBridge.tooltipExpandLabel.get(tip);
-        if (!(label instanceof UIComponentAPI) || !children(tip).contains(label)) return 0f;
+        if (!(label instanceof UIComponentAPI) || !PreviewScene.children(tip).contains(label)) return 0f;
         PositionAPI lp = ((UIComponentAPI) label).getPosition();
         return Math.max(tip.getPosition().getY() - lp.getY(), lp.getHeight());
     }
@@ -509,23 +497,10 @@ final class TooltipWatcher {
     }
 
     private static UIComponentAPI firstNonLabel(UIPanelAPI contents) {
-        for (Object c : children(contents)) {
-            if (c instanceof UIComponentAPI && !(c instanceof LabelAPI)) return (UIComponentAPI) c;
+        for (UIComponentAPI c : PreviewScene.children(contents)) {
+            if (!(c instanceof LabelAPI)) return c;
         }
         return null;
-    }
-
-    private static List<UIComponentAPI> children(Object node) {
-        return node instanceof UIPanelAPI ? ((UIPanelAPI) node).getChildrenCopy2() : Collections.<UIComponentAPI>emptyList();
-    }
-
-    private static boolean isDescendant(Object ancestor, Object node, int maxDepth) {
-        if (ancestor == node) return true;
-        if (maxDepth <= 0) return false;
-        for (Object c : children(ancestor)) {
-            if (isDescendant(c, node, maxDepth - 1)) return true;
-        }
-        return false;
     }
 
     private static boolean inRefit() {

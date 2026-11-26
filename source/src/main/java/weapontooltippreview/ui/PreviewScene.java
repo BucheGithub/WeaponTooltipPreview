@@ -1,15 +1,18 @@
 package weapontooltippreview.ui;
 
 import com.fs.starfarer.api.Global;
-import com.fs.starfarer.api.campaign.CustomUIPanelPlugin;
+import com.fs.starfarer.api.campaign.BaseCustomUIPanelPlugin;
 import com.fs.starfarer.api.combat.ShipAPI;
 import com.fs.starfarer.api.input.InputEventAPI;
+import com.fs.starfarer.api.ui.Alignment;
 import com.fs.starfarer.api.ui.CustomPanelAPI;
 import com.fs.starfarer.api.ui.Fonts;
 import com.fs.starfarer.api.ui.LabelAPI;
 import com.fs.starfarer.api.ui.PositionAPI;
+import com.fs.starfarer.api.ui.TextFieldAPI;
 import com.fs.starfarer.api.ui.TooltipMakerAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
+import com.fs.starfarer.api.ui.UIPanelAPI;
 import com.fs.starfarer.api.util.Misc;
 import org.dark.shaders.util.GraphicsLibSettings;
 import org.dark.shaders.util.ShaderHook;
@@ -28,13 +31,13 @@ import weapontooltippreview.sim.CombatArcRenderer;
 import weapontooltippreview.sim.EngineSandbox;
 
 import java.awt.Color;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.BooleanSupplier;
 
-/** The panel injected into a weapon or LPC tooltip and the scene running inside it. Acquires the Engine, steps the Scenario and renders the viewports & HUD overlays. */
-final class PreviewScene implements CustomUIPanelPlugin {
+/** The panel injected into a weapon/LPC tooltip or Codex page and the scene running inside it. Acquires the Engine, steps the Scenario and renders the viewports & HUD overlays. */
+final class PreviewScene extends BaseCustomUIPanelPlugin {
 
     /** How a newly created preview panel opens. */
     enum Opening {
@@ -46,8 +49,13 @@ final class PreviewScene implements CustomUIPanelPlugin {
         STATIC_FLICKER
     }
 
+    static final float PREVIEW_HEIGHT = 150f;
+    static final float EXPAND_DURATION = 0.18f;
+    static final float MIN_EXPAND_HEIGHT = 2f;
+    static final int SCAN_DEPTH = 2;
     /** The threat key line: its box and the gap above it. */
     static final float THREAT_HINT_HEIGHT = 24f;
+    private static final float STATUS_LINE_HEIGHT = 20f;
     /** As tall as the game's own F1 hint box under the tooltip: the font's line (10) plus 8. */
     private static final float THREAT_HINT_BOX_HEIGHT = 18f;
     /** The text sits in the box as in the game's hint: 4 below the top, 7 in from the left. */
@@ -93,8 +101,6 @@ final class PreviewScene implements CustomUIPanelPlugin {
      */
     private UIComponentAPI clipSource;
     private final EngineSandbox.Clip clip = new EngineSandbox.Clip();
-    /** Codex-only: suppresses hotkeys while the Codex search bar has focus; {@code null} for tooltips. */
-    private BooleanSupplier inputSuppressed;
     private UIComponentAPI statusLine;
     /** The threat key line, rewritten when a key changes it; null without the line. */
     private LabelAPI threatHint;
@@ -154,9 +160,38 @@ final class PreviewScene implements CustomUIPanelPlugin {
         clipSource = source;
     }
 
-    /** Codex-only: suppresses hotkey handling while {@code suppressed} returns true (e.g. search bar focused). */
-    void setInputSuppressed(BooleanSupplier suppressed) {
-        inputSuppressed = suppressed;
+    /** Creates the CustomPanel hosting this scene, its hidden "Preview unavailable" label, and optional threat hint. */
+    CustomPanelAPI createPanel(float width) {
+        boolean threatHint = ThreatSelection.appliesTo(subject);
+        CustomPanelAPI panel = Global.getSettings().createCustom(width,
+                sceneTargetHeight + (threatHint ? THREAT_HINT_HEIGHT : 0f), this);
+        TooltipMakerAPI status = panel.createUIElement(width, STATUS_LINE_HEIGHT, false);
+        LabelAPI line = status.addPara("Preview unavailable", Misc.getGrayColor(), 0f);
+        line.setAlignment(Alignment.MID);
+        panel.addUIElement(status).inTL(0f, (sceneTargetHeight - STATUS_LINE_HEIGHT) / 2f);
+        statusLine = status;
+        status.setOpacity(0f);
+        if (threatHint) addThreatHint(panel);
+        return panel;
+    }
+
+    static float easeOutCubic(float progress) {
+        float inv = 1f - Math.max(0f, Math.min(1f, progress));
+        return 1f - inv * inv * inv;
+    }
+
+    static List<UIComponentAPI> children(Object node) {
+        return node instanceof UIPanelAPI ? ((UIPanelAPI) node).getChildrenCopy2()
+                : Collections.<UIComponentAPI>emptyList();
+    }
+
+    static boolean isDescendant(Object ancestor, Object node, int maxDepth) {
+        if (ancestor == node) return true;
+        if (maxDepth <= 0) return false;
+        for (UIComponentAPI c : children(ancestor)) {
+            if (isDescendant(c, node, maxDepth - 1)) return true;
+        }
+        return false;
     }
 
     /** Current static overlay opacity in [0, 1]. */
@@ -200,14 +235,8 @@ final class PreviewScene implements CustomUIPanelPlugin {
         }
     }
 
-    /** The "Preview unavailable" line, hidden until a failure. */
-    void setStatusLine(UIComponentAPI line) {
-        statusLine = line;
-        line.setOpacity(0f);
-    }
-
     /** The threat keys on one line at the bottom of the panel. */
-    void addThreatHint(CustomPanelAPI panel) {
+    private void addThreatHint(CustomPanelAPI panel) {
         hintHeight = THREAT_HINT_HEIGHT;
         TooltipMakerAPI element = panel.createUIElement(panel.getPosition().getWidth() - THREAT_HINT_INDENT,
                 THREAT_HINT_BOX_HEIGHT, false);
@@ -344,7 +373,7 @@ final class PreviewScene implements CustomUIPanelPlugin {
     @Override
     public void processInput(List<InputEventAPI> events) {
         if (disposed || failed) return;
-        if (inputSuppressed != null && inputSuppressed.getAsBoolean()) return;
+        if (Global.getFocusManager().getAllEventsFocusOwner() instanceof TextFieldAPI) return;
         if (GRAPHICSLIB_ENABLED) processGraphicsLibToggleKey(events);
         if (showsThreatHint()) processThreatKeys(events);
     }
@@ -371,10 +400,6 @@ final class PreviewScene implements CustomUIPanelPlugin {
             event.consume();
             return;
         }
-    }
-
-    @Override
-    public void buttonPressed(Object buttonId) {
     }
 
     void dispose() {

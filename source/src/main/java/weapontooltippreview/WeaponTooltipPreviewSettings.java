@@ -50,11 +50,6 @@ public final class WeaponTooltipPreviewSettings {
     private WeaponTooltipPreviewSettings() {
     }
 
-    /** Master toggle: enables or disables all previews across tooltips and the Codex. */
-    public static boolean previewsEnabled() {
-        return previewsEnabled;
-    }
-
     /** True when the master toggle and at least one preview mode are enabled. */
     public static boolean anyPreviewEnabled() {
         return previewsEnabled && (tooltipPreviewsEnabled || campaignCodexPreviewsEnabled || battleCodexPreviewsEnabled);
@@ -63,16 +58,6 @@ public final class WeaponTooltipPreviewSettings {
     /** Weapon and wing hover tooltips get a preview. */
     public static boolean tooltipPreviewsEnabled() {
         return previewsEnabled && tooltipPreviewsEnabled;
-    }
-
-    /** Codex weapon and wing pages get a preview in the campaign and on the title screen. */
-    public static boolean campaignCodexPreviewsEnabled() {
-        return previewsEnabled && campaignCodexPreviewsEnabled;
-    }
-
-    /** Codex weapon and wing pages get a preview during combat (beta). */
-    public static boolean battleCodexPreviewsEnabled() {
-        return previewsEnabled && battleCodexPreviewsEnabled;
     }
 
     /** Codex weapon and wing pages get a preview in the given game state. */

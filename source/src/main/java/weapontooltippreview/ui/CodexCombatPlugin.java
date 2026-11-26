@@ -34,8 +34,8 @@ public final class CodexCombatPlugin extends BaseEveryFrameCombatPlugin {
         this.pausedTitleEngine = false;
         this.errors = 0;
         this.loggedErrors.clear();
-        if (!StarfarerBridge.isReady() || StarfarerBridge.codexDialogClass == null) return;
-        codex.disposeAll();
+        if (!StarfarerBridge.isReady() || !StarfarerBridge.isCodexReady()) return;
+        codex.reset();
         // Entering Title Screen (startup or returning from a save): clear any campaign sandbox and per-session failures.
         if (Global.getCurrentState() == GameState.TITLE) {
             PreviewScene.clearFailures();
@@ -46,7 +46,7 @@ public final class CodexCombatPlugin extends BaseEveryFrameCombatPlugin {
     @Override
     public void advance(float amount, List<InputEventAPI> events) {
         if (errors >= MAX_ERRORS || engine == null) return;
-        if (!StarfarerBridge.isReady() || StarfarerBridge.codexDialogClass == null) return;
+        if (!StarfarerBridge.isReady() || !StarfarerBridge.isCodexReady()) return;
         GameState state = Global.getCurrentState();
         if (state != GameState.TITLE && state != GameState.COMBAT) return;
         try {
@@ -60,7 +60,7 @@ public final class CodexCombatPlugin extends BaseEveryFrameCombatPlugin {
             }
             if (errors >= MAX_ERRORS) {
                 Log.error("codex preview disabled in " + state + " after " + errors + " errors");
-                codex.disposeAll();
+                codex.reset();
                 resumeTitleEngineIfPaused();
                 EngineSandbox.discard("codex combat plugin disabled");
             }

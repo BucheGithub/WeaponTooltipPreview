@@ -151,7 +151,7 @@ public final class EngineSandbox {
         Log.info("sandbox discarded (%s) after %d scenes; %s", why, s.scenes, Log.heap());
     }
 
-    /** Called every campaign frame: releases an engine nobody has used for a while. */
+    /** Called every frame (campaign, title screen, or combat): releases an engine nobody has used for a while. */
     public static void tick() {
         if (shared != null && !inUse && System.nanoTime() - idleSince > IDLE_NANOS) discard("idle");
     }
@@ -343,10 +343,6 @@ public final class EngineSandbox {
      * FBO passes assume it does, copies the rendered sub-rectangle, restores the full dirty background unscissored, and
      * clips each blitted view against {@code clip}.
      */
-    public void render(View[] views, int count, float[] backgroundRgb, Runnable worldOverlay) {
-        render(views, count, backgroundRgb, worldOverlay, null);
-    }
-
     public void render(View[] views, int count, float[] backgroundRgb, Runnable worldOverlay, Clip clip) {
         requireSwapped();
 

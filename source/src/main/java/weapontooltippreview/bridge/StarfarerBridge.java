@@ -1,6 +1,5 @@
 package weapontooltippreview.bridge;
 
-import com.fs.starfarer.api.ui.TextFieldAPI;
 import com.fs.starfarer.campaign.CampaignState;
 import com.fs.starfarer.codex2.CodexDetailPanel;
 import com.fs.starfarer.codex2.CodexDialog;
@@ -8,7 +7,6 @@ import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatState;
 import com.fs.starfarer.combat.systems.WeaponGroup;
 import com.fs.starfarer.coreui.refit.WeaponPickerDialog;
-import com.fs.starfarer.title.TitleScreenState;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.graphics.anim.AnimationManager;
 import com.fs.state.AppState;
@@ -52,23 +50,23 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod buttonGetRenderer;
 
     // optional: the codex detail panel (campaign, title screen, combat), failure = no codex previews
-    public static Class<?> codexDialogClass;
-    public static Refl.ReflectedMethod campaignCodexOverlay;
-    public static Refl.ReflectedMethod titleCodexOverlay;
-    public static Refl.ReflectedMethod combatCodexOverlay;
     public static Refl.ReflectedField codexDetailPanel;
-    public static Refl.ReflectedField codexSearchField;
     public static Refl.ReflectedField codexPlugin;
     public static Refl.ReflectedField codexScroller;
     public static Refl.ReflectedField codexMainText;
 
     private static boolean ready;
+    private static boolean codexReady;
 
     private StarfarerBridge() {
     }
 
     public static boolean isReady() {
         return ready;
+    }
+
+    public static boolean isCodexReady() {
+        return codexReady;
     }
 
     /** Resolves every entry; each group's availability field is set last, so a failed group stays unavailable. */
@@ -117,16 +115,13 @@ public final class StarfarerBridge {
         }
 
         try {
-            campaignCodexOverlay = method(CampaignState.class, "getOverlayPanelForCodex");
-            titleCodexOverlay = Refl.method(TitleScreenState.class, "getOverlayPanelForCodex");
-            combatCodexOverlay = Refl.method(CombatState.class, "getOverlayPanelForCodex");
+            method(CampaignState.class, "getOverlayPanelForCodex");
             codexDetailPanel = Refl.fieldOfType(CodexDialog.class, CodexDetailPanel.class, false);
             if (codexDetailPanel == null) throw new IllegalStateException("CodexDialog has no CodexDetailPanel field");
-            codexSearchField = Refl.fieldOfType(CodexDialog.class, TextFieldAPI.class, false);
             codexPlugin = field(CodexDetailPanel.class, "plugin");
             codexScroller = field(CodexDetailPanel.class, "scroller");
             codexMainText = field(CodexDetailPanel.class, "mainText");
-            codexDialogClass = CodexDialog.class;
+            codexReady = true;
         } catch (Throwable t) {
             Log.error("bridge: the codex detail panel is missing; codex previews disabled", t);
         }
@@ -134,16 +129,9 @@ public final class StarfarerBridge {
 
     /** Returns the active state's codex overlay panel, or null if unsupported. */
     public static Object codexOverlay(AppState state) {
-        if (state instanceof CampaignState && campaignCodexOverlay != null) {
-            return campaignCodexOverlay.invoke(state);
-        }
-        if (state instanceof TitleScreenState && titleCodexOverlay != null) {
-            return titleCodexOverlay.invoke(state);
-        }
-        if (state instanceof CombatState && combatCodexOverlay != null) {
-            return combatCodexOverlay.invoke(state);
-        }
-        return null;
+        if (state == null) return null;
+        Refl.ReflectedMethod overlay = Refl.method(state.getClass(), "getOverlayPanelForCodex");
+        return overlay != null ? overlay.invoke(state) : null;
     }
 
     /** Finds the obfuscated refit panel class from WeaponPickerDialog's fields by its unobfuscated methods. */
