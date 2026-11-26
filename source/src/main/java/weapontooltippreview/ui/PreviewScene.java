@@ -286,20 +286,27 @@ final class PreviewScene extends BaseCustomUIPanelPlugin {
         try {
             if (sandbox == null) {
                 startScene();
-                if (staticHoldRemaining > 0f) {
-                    // Populate the first frame silently while full static covers the viewport.
-                    step(MAX_STEP, false);
+                // Populate the first frame silently, then prime the sound listener so it is in position before shot #1.
+                step(MAX_STEP, false);
+                primeListener();
+                if (threatHint != null && (staticHoldRemaining > 0f || staticFadeRemaining > 0f)) {
+                    threatHint.setOpacity(0f);
                 }
+                return;
             }
             if (staticHoldRemaining > 0f) {
                 staticHoldRemaining = Math.max(0f, staticHoldRemaining - dt);
                 if (threatHint != null) threatHint.setOpacity(0f);
+                primeListener();
                 return;
             }
             if (staticFadeRemaining > 0f) {
                 staticFadeRemaining = Math.max(0f, staticFadeRemaining - dt);
+                if (threatHint != null) threatHint.setOpacity(1f - staticIntensity());
+                primeListener();
+                return;
             }
-            if (threatHint != null) threatHint.setOpacity(1f - staticIntensity());
+            if (threatHint != null) threatHint.setOpacity(1f);
             step(amount, true);
         } catch (NoPreviewException e) {
             fail(e.getMessage(), null);
@@ -454,6 +461,12 @@ final class PreviewScene extends BaseCustomUIPanelPlugin {
             arcRenderer = null;
             arcUnavailable = true;
         }
+    }
+
+    /** Moves the sound listener onto the preview for the next frame so the first live shot is never muted. */
+    private void primeListener() {
+        Global.getSoundPlayer().setListenerPosOverrideOneFrame(
+                WeaponTooltipPreviewSettings.sound() ? scenario.listenerPosition() : FAR_AWAY);
     }
 
     /**
