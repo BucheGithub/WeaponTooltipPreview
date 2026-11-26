@@ -274,6 +274,15 @@ public final class EngineSandbox {
         public float worldX, worldY, worldWidth, worldHeight;
     }
 
+    /**
+     * Optional pixel scissor rectangle used by Codex previews to clip rendering to {@code CodexDetailPanel.scroller}'s
+     * visible viewport without querying {@code GL_SCISSOR_BOX} from OpenGL. Floating tooltips leave this {@code null}
+     * because they are not hosted inside a scroll pane.
+     */
+    public static final class Clip {
+        public int pixelX, pixelY, pixelWidth, pixelHeight;
+    }
+
     /** Whether render() can draw the views from one full-screen GraphicsLib engine render. */
     private static boolean fitsOneRender(View[] views, int count) {
         float[] bounds = worldBounds(views, count);
@@ -306,12 +315,18 @@ public final class EngineSandbox {
 
     /**
      * Shows each view's rectangle of the world in its rectangle of screen pixels, then runs the overlay in each view,
-     * scissored to it.
+     * scissored to it (and intersected with {@code clip} when non-null, as needed for Codex previews inside a scroll
+     * pane; tooltips pass {@code null}).
      * When GraphicsLib shaders are off or absent, each view is rendered directly into its scissored viewport.
      * When GraphicsLib shaders are active, the engine renders at (0, 0) with a full-screen viewport because GraphicsLib's
-     * FBO passes assume it does, but scissored and copied only across the sub-rectangle covered by the views.
+     * FBO passes assume it does, copies the rendered sub-rectangle, restores the full dirty background unscissored, and
+     * clips each blitted view against {@code clip}.
      */
     public void render(View[] views, int count, float[] backgroundRgb, Runnable worldOverlay) {
+        render(views, count, backgroundRgb, worldOverlay, null);
+    }
+
+    public void render(View[] views, int count, float[] backgroundRgb, Runnable worldOverlay, Clip clip) {
         requireSwapped();
 
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
@@ -323,12 +338,11 @@ public final class EngineSandbox {
             if (!graphicsLibActive()) {
                 setShieldMipmaps(true);
                 try {
-                    GL11.glEnable(GL11.GL_SCISSOR_TEST);
                     for (int i = 0; i < count; i++) {
                         View view = views[i];
+                        if (!scissorView(view, clip)) continue;
                         aimCamera(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight, view.worldX, view.worldY,
                                 view.worldWidth, view.worldHeight);
-                        GL11.glScissor(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight);
                         fillBackground(backgroundRgb, view.worldX, view.worldY, view.worldWidth, view.worldHeight);
                         engine.render(false);
                     }
@@ -336,17 +350,16 @@ public final class EngineSandbox {
                     setShieldMipmaps(false);
                 }
             } else if (fitsOneRender(views, count)) {
-                renderGraphicsLibSinglePass(views, count, backgroundRgb);
+                renderGraphicsLibSinglePass(views, count, backgroundRgb, clip);
             } else {
-                renderGraphicsLibMultiPass(views, count, backgroundRgb);
+                renderGraphicsLibMultiPass(views, count, backgroundRgb, clip);
             }
             if (worldOverlay != null) {
                 for (int i = 0; i < count; i++) {
                     View view = views[i];
+                    if (!scissorView(view, clip)) continue;
                     aimCamera(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight, view.worldX, view.worldY,
                             view.worldWidth, view.worldHeight);
-                    GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                    GL11.glScissor(view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight);
                     worldOverlay.run();
                 }
             }
@@ -358,6 +371,23 @@ public final class EngineSandbox {
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
             GL11.glPopAttrib();
         }
+    }
+
+    /** Intersects {@code view}'s pixel rectangle with {@code clip} (if any) and sets glScissor; false if empty. */
+    private static boolean scissorView(View view, Clip clip) {
+        int x0 = view.pixelX, y0 = view.pixelY;
+        int x1 = x0 + view.pixelWidth, y1 = y0 + view.pixelHeight;
+        if (clip != null) {
+            x0 = Math.max(x0, clip.pixelX);
+            y0 = Math.max(y0, clip.pixelY);
+            x1 = Math.min(x1, clip.pixelX + clip.pixelWidth);
+            y1 = Math.min(y1, clip.pixelY + clip.pixelHeight);
+        }
+        int w = x1 - x0, h = y1 - y0;
+        if (w <= 0 || h <= 0) return false;
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(x0, y0, w, h);
+        return true;
     }
 
     /** Points the viewport and the projection at the world rectangle */
@@ -418,7 +448,7 @@ public final class EngineSandbox {
     }
 
     /** Renders all views in one GraphicsLib engine pass when their combined world span fits on screen. */
-    private void renderGraphicsLibSinglePass(View[] views, int count, float[] backgroundRgb) {
+    private void renderGraphicsLibSinglePass(View[] views, int count, float[] backgroundRgb, Clip clip) {
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
         float[] bounds = worldBounds(views, count);
         float unitsPerPixelX = views[0].worldWidth / views[0].pixelWidth;
@@ -459,7 +489,7 @@ public final class EngineSandbox {
                 srcX[i] = Math.round((views[i].worldX - bounds[0]) / unitsPerPixelX);
                 srcY[i] = Math.round((views[i].worldY - bounds[1]) / unitsPerPixelY);
             }
-            compositeScreen(views, count, srcX, srcY, dirtyWidth, dirtyHeight);
+            compositeScreen(views, count, srcX, srcY, dirtyWidth, dirtyHeight, clip);
         }
     }
 
@@ -467,7 +497,7 @@ public final class EngineSandbox {
      * Renders each view separately at (0, 0) when their combined world span is wider than the screen (e.g. very long
      * range split views), packing each rendered pane side-by-side into sceneCopy before restoring the screen once.
      */
-    private void renderGraphicsLibMultiPass(View[] views, int count, float[] backgroundRgb) {
+    private void renderGraphicsLibMultiPass(View[] views, int count, float[] backgroundRgb, Clip clip) {
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
         int maxW = 1, maxH = 1;
         for (int i = 0; i < count; i++) {
@@ -513,7 +543,7 @@ public final class EngineSandbox {
         } finally {
             setShieldMipmaps(false);
             prepareCompositeState();
-            compositeScreen(views, copied, srcX, srcY, dirtyWidth, dirtyHeight);
+            compositeScreen(views, copied, srcX, srcY, dirtyWidth, dirtyHeight, clip);
         }
     }
 
@@ -535,7 +565,8 @@ public final class EngineSandbox {
     }
 
     /** Puts the modified region of screenCopy back, then draws each copied view from sceneCopy into its rectangle. */
-    private void compositeScreen(View[] views, int count, int[] srcX, int[] srcY, int dirtyWidth, int dirtyHeight) {
+    private void compositeScreen(View[] views, int count, int[] srcX, int[] srcY, int dirtyWidth, int dirtyHeight,
+                                 Clip clip) {
         int screenWidth = screenWidthPixels(), screenHeight = screenHeightPixels();
         GL11.glViewport(0, 0, screenWidth, screenHeight);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
@@ -546,8 +577,10 @@ public final class EngineSandbox {
         drawScreenTexture(screenCopy, 0, 0, dirtyWidth, dirtyHeight, 0, 0);
         for (int i = 0; i < count; i++) {
             View view = views[i];
+            if (clip != null && !scissorView(view, clip)) continue;
             drawScreenTexture(sceneCopy, view.pixelX, view.pixelY, view.pixelWidth, view.pixelHeight, srcX[i], srcY[i]);
         }
+        if (clip != null) GL11.glDisable(GL11.GL_SCISSOR_TEST);
         GL11.glEnable(GL11.GL_BLEND);
     }
 

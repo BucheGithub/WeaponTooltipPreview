@@ -1,5 +1,9 @@
 package weapontooltippreview.bridge;
 
+import com.fs.starfarer.api.ui.TextFieldAPI;
+import com.fs.starfarer.campaign.CampaignState;
+import com.fs.starfarer.codex2.CodexDetailPanel;
+import com.fs.starfarer.codex2.CodexDialog;
 import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatState;
 import com.fs.starfarer.combat.systems.WeaponGroup;
@@ -44,6 +48,15 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod refitShipDisplay;
     public static Refl.ReflectedMethod refitCurrentVariant;
     public static Refl.ReflectedMethod buttonGetRenderer;
+
+    // optional: the campaign codex detail panel, failure = no codex previews
+    public static Class<?> codexDialogClass;
+    public static Refl.ReflectedMethod campaignCodexOverlay;
+    public static Refl.ReflectedField codexDetailPanel;
+    public static Refl.ReflectedField codexSearchField;
+    public static Refl.ReflectedField codexPlugin;
+    public static Refl.ReflectedField codexScroller;
+    public static Refl.ReflectedField codexMainText;
 
     private static boolean ready;
 
@@ -97,6 +110,19 @@ public final class StarfarerBridge {
             refitPanelClass = panel;
         } catch (Throwable t) {
             Log.error("bridge: the refit panel is missing; previews use a generic ship", t);
+        }
+
+        try {
+            campaignCodexOverlay = method(CampaignState.class, "getOverlayPanelForCodex");
+            codexDetailPanel = Refl.fieldOfType(CodexDialog.class, CodexDetailPanel.class, false);
+            if (codexDetailPanel == null) throw new IllegalStateException("CodexDialog has no CodexDetailPanel field");
+            codexSearchField = Refl.fieldOfType(CodexDialog.class, TextFieldAPI.class, false);
+            codexPlugin = field(CodexDetailPanel.class, "plugin");
+            codexScroller = field(CodexDetailPanel.class, "scroller");
+            codexMainText = field(CodexDetailPanel.class, "mainText");
+            codexDialogClass = CodexDialog.class;
+        } catch (Throwable t) {
+            Log.error("bridge: the codex detail panel is missing; codex previews disabled", t);
         }
     }
 

@@ -31,6 +31,7 @@ import java.awt.Color;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /** The panel injected into a weapon or LPC tooltip and the scene running inside it. Acquires the Engine, steps the Scenario and renders the viewports & HUD overlays. */
 final class PreviewScene implements CustomUIPanelPlugin {
@@ -86,6 +87,14 @@ final class PreviewScene implements CustomUIPanelPlugin {
     private final PreviewSubject subject;
     private final RefitShip refit;
     private PositionAPI pos;
+    /**
+     * Codex scroll pane ({@code CodexDetailPanel.scroller}) whose bounds clip the scene render as the entry scrolls.
+     * {@code null} for floating tooltips, which are not hosted inside a scroll container.
+     */
+    private UIComponentAPI clipSource;
+    private final EngineSandbox.Clip clip = new EngineSandbox.Clip();
+    /** Codex-only: suppresses hotkeys while the Codex search bar has focus; {@code null} for tooltips. */
+    private BooleanSupplier inputSuppressed;
     private UIComponentAPI statusLine;
     /** The threat key line, rewritten when a key changes it; null without the line. */
     private LabelAPI threatHint;
@@ -135,9 +144,19 @@ final class PreviewScene implements CustomUIPanelPlugin {
         }
     }
 
-    /** Called by TooltipWatcher once the panel reaches its full expanded height. */
+    /** Called by the watcher once the panel reaches its full expanded height. */
     void finishExpanding() {
         expanding = false;
+    }
+
+    /** Codex-only: clips scene rendering to the Codex scroll pane's bounds; unused ({@code null}) for tooltips. */
+    void setClipSource(UIComponentAPI source) {
+        clipSource = source;
+    }
+
+    /** Codex-only: suppresses hotkey handling while {@code suppressed} returns true (e.g. search bar focused). */
+    void setInputSuppressed(BooleanSupplier suppressed) {
+        inputSuppressed = suppressed;
     }
 
     /** Current static overlay opacity in [0, 1]. */
@@ -168,7 +187,7 @@ final class PreviewScene implements CustomUIPanelPlugin {
             scene.startScene();
             try {
                 for (int i = 0; i < PREWARM_STEPS; i++) scene.step(MAX_STEP, false);
-                scene.drawScene(0f, 0f, PREWARM_WIDTH, PREWARM_HEIGHT, null);
+                scene.drawScene(0f, 0f, PREWARM_WIDTH, PREWARM_HEIGHT, null, null);
             } catch (RuntimeException | Error e) {
                 scene.endScene(true);
                 throw e;
@@ -285,10 +304,12 @@ final class PreviewScene implements CustomUIPanelPlugin {
     public void render(float alphaMult) {
         if (pos == null) return;
         float x = pos.getX(), w = pos.getWidth(), h = sceneHeight(), y = sceneY(h);
+        EngineSandbox.Clip activeClip = currentClip();
+        boolean sceneVisible = activeClip == null || intersectsClip(x, y, w, h, activeClip);
         float staticInt = staticIntensity();
-        if (!expanding && staticHoldRemaining <= 0f && sandbox != null && frames > 0) {
+        if (sceneVisible && !expanding && staticHoldRemaining <= 0f && sandbox != null && frames > 0) {
             try {
-                drawScene(x, y, w, h, arcRenderer != null ? this::drawArc : null);
+                drawScene(x, y, w, h, arcRenderer != null ? this::drawArc : null, activeClip);
                 HUD.drawOverlays(scenario, panes, paneCount, split, x, y, w, h, alphaMult);
             } catch (Throwable t) {
                 fail("render failed", t);
@@ -302,9 +323,28 @@ final class PreviewScene implements CustomUIPanelPlugin {
         HUD.drawFrame(x, y, w, h, hintAlpha, pos.getY(), THREAT_HINT_BOX_HEIGHT, alphaMult);
     }
 
+    private EngineSandbox.Clip currentClip() {
+        if (clipSource == null) return null;
+        PositionAPI cp = clipSource.getPosition();
+        if (cp == null) return null;
+        clip.pixelX = toPixels(cp.getX());
+        clip.pixelY = toPixels(cp.getY());
+        clip.pixelWidth = toPixels(cp.getWidth());
+        clip.pixelHeight = toPixels(cp.getHeight());
+        return clip;
+    }
+
+    private static boolean intersectsClip(float x, float y, float w, float h, EngineSandbox.Clip c) {
+        int x0 = toPixels(x), y0 = toPixels(y);
+        int x1 = x0 + toPixels(w), y1 = y0 + toPixels(h);
+        return Math.min(x1, c.pixelX + c.pixelWidth) > Math.max(x0, c.pixelX)
+                && Math.min(y1, c.pixelY + c.pixelHeight) > Math.max(y0, c.pixelY);
+    }
+
     @Override
     public void processInput(List<InputEventAPI> events) {
         if (disposed || failed) return;
+        if (inputSuppressed != null && inputSuppressed.getAsBoolean()) return;
         if (GRAPHICSLIB_ENABLED) processGraphicsLibToggleKey(events);
         if (showsThreatHint()) processThreatKeys(events);
     }
@@ -419,12 +459,12 @@ final class PreviewScene implements CustomUIPanelPlugin {
     }
 
     /** The engine's picture of the scene in the UI rectangle, then HUD overlay. */
-    private void drawScene(float x, float y, float w, float h, Runnable overlay) {
+    private void drawScene(float x, float y, float w, float h, Runnable overlay, EngineSandbox.Clip activeClip) {
         layout(x, y, w, h);
         long t0 = System.nanoTime();
         sandbox.swapIn();
         try {
-            sandbox.render(panes, paneCount, PreviewHud.BACKGROUND, overlay);
+            sandbox.render(panes, paneCount, PreviewHud.BACKGROUND, overlay, activeClip);
         } finally {
             sandbox.swapOut();
         }

@@ -3,6 +3,7 @@ package weapontooltippreview.ui;
 import com.fs.starfarer.api.EveryFrameScript;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.listeners.CampaignInputListener;
+import com.fs.starfarer.api.campaign.listeners.CodexEventListener;
 import com.fs.starfarer.api.input.InputEventAPI;
 import weapontooltippreview.Log;
 import weapontooltippreview.WeaponTooltipPreviewSettings;
@@ -13,13 +14,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Campaign driver: registers the transient tooltip watcher, ticks the shared preview engine, and forwards campaign input to the active preview scene.
+/** Campaign driver: registers the transient tooltip and codex watchers, ticks the shared preview engine, and forwards campaign input to the active tooltip preview scene.
  */
-public final class PreviewController implements EveryFrameScript, CampaignInputListener {
+public final class PreviewController implements EveryFrameScript, CampaignInputListener, CodexEventListener {
 
     private static final int MAX_ERRORS = 20;
 
     private final TooltipWatcher tooltips = new TooltipWatcher();
+    private final CodexWatcher codex = new CodexWatcher();
     private final Set<String> loggedErrors = new HashSet<>();
     private int errors;
 
@@ -51,7 +53,14 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     public void advance(float amount) {
         if (errors >= MAX_ERRORS) return;
         try {
-            tooltips.tick();
+            // Release whichever watcher is becoming inactive before the other acquires the shared EngineSandbox.
+            if (Global.getSettings().isShowingCodex()) {
+                tooltips.tick();
+                codex.tick();
+            } else {
+                codex.tick();
+                tooltips.tick();
+            }
             EngineSandbox.tick();
         } catch (Throwable t) {
             errors++;
@@ -59,9 +68,20 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
             if (errors >= MAX_ERRORS) {
                 Log.error("preview disabled after " + errors + " errors");
                 tooltips.disposeAll();
+                codex.disposeAll();
                 EngineSandbox.discard("controller disabled");
             }
         }
+    }
+
+    @Override
+    public void reportAboutToOpenCodex() {
+        tooltips.disposeAll();
+    }
+
+    @Override
+    public void reportClosedCodex() {
+        codex.disposeAll();
     }
 
     @Override
