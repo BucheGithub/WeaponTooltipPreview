@@ -1,6 +1,9 @@
 fieldID,fieldName,fieldType,defaultValue,secondaryValue,fieldDescription,minValue,maxValue,tab
 WeaponTooltipPreview_headerGeneral,General,Header,General,,,,,
-WeaponTooltipPreview_enablePreviews,Enable Mod,Boolean,true,,"Shows a live combat preview in weapon and fighter wing tooltips. Off leaves every tooltip as the game draws it.",,,
+WeaponTooltipPreview_enablePreviews,Enable Mod,Boolean,true,,"Master toggle that enables or disables all live combat previews across tooltips and the Codex. Off leaves every tooltip and Codex page untouched and skips building the preview engine on load.",,,
+WeaponTooltipPreview_enableTooltipPreviews,Enable Tooltip Previews,Boolean,true,,"Shows a live combat preview in weapon and fighter wing tooltips. Off leaves every tooltip as the game draws it.",,,
+WeaponTooltipPreview_enableCampaignCodexPreviews,Enable Campaign Codex Previews,Boolean,true,,"Shows a live combat preview above the description on weapon and fighter Codex pages in the campaign and on the title screen.",,,
+WeaponTooltipPreview_enableBattleCodexPreviews,Enable Battle Codex Previews (BETA),Boolean,true,,"[BETA] Shows a live combat preview above the description on weapon and fighter Codex pages during combat. Experimental: running previews alongside a live battle may cause bugs or mod conflicts.",,,
 WeaponTooltipPreview_sound,Enable Sound,Boolean,true,,"Plays the preview's weapon fire and impacts at your [sound effects volume]. Off keeps every preview silent.",,,
 WeaponTooltipPreview_enableLogs,Enable Logs,Boolean,false,,"Writes what the previews do to [starsector.log], for troubleshooting. Errors are always logged.",,,
 WeaponTooltipPreview_headerPreview,Preview,Header,Preview,,,,,

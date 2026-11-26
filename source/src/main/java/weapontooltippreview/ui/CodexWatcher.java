@@ -15,7 +15,6 @@ import com.fs.starfarer.api.ui.TooltipMakerAPI;
 import com.fs.starfarer.api.ui.UIComponentAPI;
 import com.fs.starfarer.api.ui.UIPanelAPI;
 import com.fs.starfarer.api.util.Misc;
-import com.fs.starfarer.campaign.CampaignState;
 import com.fs.starfarer.codex2.CodexDialog;
 import com.fs.state.AppDriver;
 import com.fs.state.AppState;
@@ -30,10 +29,13 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Watches the campaign Codex detail panel for weapon and fighter wing entries and injects the live preview panel
- * directly above the Description box, matching tooltip delay/expand behaviour and clipping to the Codex scroll pane.
+ * Watches the Codex detail panel (across Campaign, Title Screen, and Combat) for weapon and fighter wing entries and
+ * injects the live preview panel directly above the Description box, matching tooltip delay/expand behaviour and
+ * clipping to the Codex scroll pane.
  */
 final class CodexWatcher {
+
+    private static final CodexWatcher SHARED = new CodexWatcher();
 
     private static final float PREVIEW_HEIGHT = 150f;
     /** Matches CodexDetailPanel's 10px spacing between detail sections. */
@@ -42,6 +44,13 @@ final class CodexWatcher {
     private static final float EXPAND_DURATION = 0.18f;
     private static final float MIN_EXPAND_HEIGHT = 2f;
     private static final int SCAN_DEPTH = 2;
+
+    static CodexWatcher shared() {
+        return SHARED;
+    }
+
+    private CodexWatcher() {
+    }
 
     private static final class ExpansionLayout {
         final UIPanelAPI content;
@@ -73,6 +82,7 @@ final class CodexWatcher {
 
     private long lastTickNanos;
     private int nextId = 1;
+    private GameState trackedState;
     /** Identity of the currently rendered CodexDetailPanel.mainText; changes on every entry switch or reload. */
     private Object trackedMainText;
     private PreviewSubject subject;
@@ -82,13 +92,24 @@ final class CodexWatcher {
     private CustomPanelAPI injectedPanel;
     private ExpansionLayout layout;
 
+    /** True while a Codex preview panel is currently live. */
+    boolean isActive() {
+        return activePreview != null && !activePreview.isDisposed();
+    }
+
     void tick() {
         long now = System.nanoTime();
         float dt = lastTickNanos == 0L ? 0f : Math.min(0.1f, (now - lastTickNanos) / 1e9f);
         lastTickNanos = now;
 
+        GameState currentState = Global.getCurrentState();
+        if (currentState != trackedState) {
+            reset();
+            trackedState = currentState;
+        }
+
         if (StarfarerBridge.codexDialogClass == null
-                || Global.getCurrentState() != GameState.CAMPAIGN
+                || !supportedState(currentState)
                 || !Global.getSettings().isShowingCodex()) {
             reset();
             return;
@@ -123,14 +144,14 @@ final class CodexWatcher {
             subject = currentSubject;
         }
 
-        if (!WeaponTooltipPreviewSettings.previewsEnabled()) {
+        if (!WeaponTooltipPreviewSettings.codexPreviewsEnabled(currentState)) {
             uninjectLive();
             disposeActive();
             return;
         }
 
         if (injectedPanel == null) {
-            if (noPreviewFor(subject)) return;
+            if (noPreviewFor(subject, currentState)) return;
             if (!opened) {
                 if (WeaponTooltipPreviewSettings.delayEnabled()) {
                     entryElapsed += dt;
@@ -293,12 +314,20 @@ final class CodexWatcher {
         return null;
     }
 
+    private static boolean supportedState(GameState state) {
+        return state == GameState.CAMPAIGN || state == GameState.TITLE || state == GameState.COMBAT;
+    }
+
     private static Object findCodexDialog() {
         AppState state = AppDriver.getInstance().getCurrentState();
-        if (!(state instanceof CampaignState)) return null;
-        Object overlay = StarfarerBridge.campaignCodexOverlay.invoke(state);
-        if (!(overlay instanceof UIPanelAPI)) return null;
-        return findByClass(overlay, StarfarerBridge.codexDialogClass, 0);
+        Object overlay = StarfarerBridge.codexOverlay(state);
+        if (overlay instanceof UIPanelAPI) {
+            Object dialog = findByClass(overlay, StarfarerBridge.codexDialogClass, 0);
+            if (dialog != null) return dialog;
+        }
+        // Title Screen and ESC-menu "Codex" buttons mount CodexDialog under screenPanel instead of codexOverlay.
+        UIPanelAPI screen = Global.getSettings().getScreenPanel();
+        return screen != null ? findByClass(screen, StarfarerBridge.codexDialogClass, 0) : null;
     }
 
     private static Object findByClass(Object node, Class<?> type, int depth) {
@@ -326,8 +355,8 @@ final class CodexWatcher {
         return null;
     }
 
-    private static boolean noPreviewFor(PreviewSubject subject) {
-        return !WeaponTooltipPreviewSettings.previewsEnabled() || EngineSandbox.isDisabled()
+    private static boolean noPreviewFor(PreviewSubject subject, GameState state) {
+        return !WeaponTooltipPreviewSettings.codexPreviewsEnabled(state) || EngineSandbox.isDisabled()
                 || PreviewScene.hasFailed(subject, false);
     }
 

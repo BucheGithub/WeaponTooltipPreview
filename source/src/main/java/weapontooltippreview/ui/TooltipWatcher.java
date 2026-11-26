@@ -301,7 +301,7 @@ final class TooltipWatcher {
 
     /** Previews switched off in the settings, the engine given up on, or this weapon's or wing's preview failed. */
     private static boolean noPreviewFor(PreviewSubject subject) {
-        return !WeaponTooltipPreviewSettings.previewsEnabled() || EngineSandbox.isDisabled()
+        return !WeaponTooltipPreviewSettings.tooltipPreviewsEnabled() || EngineSandbox.isDisabled()
                 || PreviewScene.hasFailed(subject, inRefit());
     }
 

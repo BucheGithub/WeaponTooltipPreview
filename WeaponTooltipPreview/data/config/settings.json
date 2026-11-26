@@ -1,0 +1,5 @@
+{
+    "plugins": {
+        "WeaponTooltipPreview_CodexCombatPlugin": "weapontooltippreview.ui.CodexCombatPlugin"
+    }
+}

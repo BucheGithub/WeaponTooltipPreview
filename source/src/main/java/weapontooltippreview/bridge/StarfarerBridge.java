@@ -8,8 +8,10 @@ import com.fs.starfarer.combat.CombatEngine;
 import com.fs.starfarer.combat.CombatState;
 import com.fs.starfarer.combat.systems.WeaponGroup;
 import com.fs.starfarer.coreui.refit.WeaponPickerDialog;
+import com.fs.starfarer.title.TitleScreenState;
 import com.fs.starfarer.ui.impl.StandardTooltipV2;
 import com.fs.graphics.anim.AnimationManager;
+import com.fs.state.AppState;
 import weapontooltippreview.Log;
 
 /**
@@ -49,9 +51,11 @@ public final class StarfarerBridge {
     public static Refl.ReflectedMethod refitCurrentVariant;
     public static Refl.ReflectedMethod buttonGetRenderer;
 
-    // optional: the campaign codex detail panel, failure = no codex previews
+    // optional: the codex detail panel (campaign, title screen, combat), failure = no codex previews
     public static Class<?> codexDialogClass;
     public static Refl.ReflectedMethod campaignCodexOverlay;
+    public static Refl.ReflectedMethod titleCodexOverlay;
+    public static Refl.ReflectedMethod combatCodexOverlay;
     public static Refl.ReflectedField codexDetailPanel;
     public static Refl.ReflectedField codexSearchField;
     public static Refl.ReflectedField codexPlugin;
@@ -114,6 +118,8 @@ public final class StarfarerBridge {
 
         try {
             campaignCodexOverlay = method(CampaignState.class, "getOverlayPanelForCodex");
+            titleCodexOverlay = Refl.method(TitleScreenState.class, "getOverlayPanelForCodex");
+            combatCodexOverlay = Refl.method(CombatState.class, "getOverlayPanelForCodex");
             codexDetailPanel = Refl.fieldOfType(CodexDialog.class, CodexDetailPanel.class, false);
             if (codexDetailPanel == null) throw new IllegalStateException("CodexDialog has no CodexDetailPanel field");
             codexSearchField = Refl.fieldOfType(CodexDialog.class, TextFieldAPI.class, false);
@@ -124,6 +130,20 @@ public final class StarfarerBridge {
         } catch (Throwable t) {
             Log.error("bridge: the codex detail panel is missing; codex previews disabled", t);
         }
+    }
+
+    /** Returns the active state's codex overlay panel, or null if unsupported. */
+    public static Object codexOverlay(AppState state) {
+        if (state instanceof CampaignState && campaignCodexOverlay != null) {
+            return campaignCodexOverlay.invoke(state);
+        }
+        if (state instanceof TitleScreenState && titleCodexOverlay != null) {
+            return titleCodexOverlay.invoke(state);
+        }
+        if (state instanceof CombatState && combatCodexOverlay != null) {
+            return combatCodexOverlay.invoke(state);
+        }
+        return null;
     }
 
     /** Finds the obfuscated refit panel class from WeaponPickerDialog's fields by its unobfuscated methods. */

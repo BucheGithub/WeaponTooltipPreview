@@ -1,5 +1,6 @@
 package weapontooltippreview;
 
+import com.fs.starfarer.api.GameState;
 import lunalib.lunaSettings.LunaSettings;
 import org.lwjgl.input.Keyboard;
 
@@ -33,6 +34,9 @@ public final class WeaponTooltipPreviewSettings {
     };
 
     private static boolean previewsEnabled = true;
+    private static boolean tooltipPreviewsEnabled = true;
+    private static boolean campaignCodexPreviewsEnabled = true;
+    private static boolean battleCodexPreviewsEnabled = true;
     private static boolean delayEnabled;
     private static float previewDelay = DEFAULT_PREVIEW_DELAY;
     private static boolean sound = true;
@@ -46,9 +50,37 @@ public final class WeaponTooltipPreviewSettings {
     private WeaponTooltipPreviewSettings() {
     }
 
-    /** Weapon and wing tooltips get a preview. */
+    /** Master toggle: enables or disables all previews across tooltips and the Codex. */
     public static boolean previewsEnabled() {
         return previewsEnabled;
+    }
+
+    /** True when the master toggle and at least one preview mode are enabled. */
+    public static boolean anyPreviewEnabled() {
+        return previewsEnabled && (tooltipPreviewsEnabled || campaignCodexPreviewsEnabled || battleCodexPreviewsEnabled);
+    }
+
+    /** Weapon and wing hover tooltips get a preview. */
+    public static boolean tooltipPreviewsEnabled() {
+        return previewsEnabled && tooltipPreviewsEnabled;
+    }
+
+    /** Codex weapon and wing pages get a preview in the campaign and on the title screen. */
+    public static boolean campaignCodexPreviewsEnabled() {
+        return previewsEnabled && campaignCodexPreviewsEnabled;
+    }
+
+    /** Codex weapon and wing pages get a preview during combat (beta). */
+    public static boolean battleCodexPreviewsEnabled() {
+        return previewsEnabled && battleCodexPreviewsEnabled;
+    }
+
+    /** Codex weapon and wing pages get a preview in the given game state. */
+    public static boolean codexPreviewsEnabled(GameState state) {
+        if (!previewsEnabled || state == null) return false;
+        if (state == GameState.COMBAT) return battleCodexPreviewsEnabled;
+        if (state == GameState.CAMPAIGN || state == GameState.TITLE) return campaignCodexPreviewsEnabled;
+        return false;
     }
 
     /** Delays opening the preview on hover, then expands with a short static animation. */
@@ -100,6 +132,12 @@ public final class WeaponTooltipPreviewSettings {
         Log.setEnabled(Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableLogs")));
 
         previewsEnabled = !Boolean.FALSE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enablePreviews"));
+        tooltipPreviewsEnabled = !Boolean.FALSE.equals(
+                LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableTooltipPreviews"));
+        campaignCodexPreviewsEnabled = !Boolean.FALSE.equals(
+                LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableCampaignCodexPreviews"));
+        battleCodexPreviewsEnabled = !Boolean.FALSE.equals(
+                LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableBattleCodexPreviews"));
         delayEnabled = Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableDelay"));
         Double delay = LunaSettings.getDouble(MOD_ID, "WeaponTooltipPreview_previewDelay");
         previewDelay = delay != null ? Math.max(0f, Math.min(MAX_PREVIEW_DELAY, delay.floatValue())) : DEFAULT_PREVIEW_DELAY;
@@ -119,8 +157,10 @@ public final class WeaponTooltipPreviewSettings {
         threatModeKey = keySetting("WeaponTooltipPreview_threatModeKey", Keyboard.KEY_F5);
         threatMissileKey = keySetting("WeaponTooltipPreview_threatMissileKey", Keyboard.KEY_F6);
         threatWingKey = keySetting("WeaponTooltipPreview_threatWingKey", Keyboard.KEY_F7);
-        Log.info("settings: previews %s, delay %s (%.2fs), sound %s, dummy %s, shield %s, threat keys %s %s %s",
-                previewsEnabled ? "on" : "off", delayEnabled ? "on" : "off", previewDelay, sound ? "on" : "off",
+        Log.info("settings: mod %s (tooltips %s, campaign codex %s, battle codex %s), delay %s (%.2fs), sound %s, dummy %s, shield %s, threat keys %s %s %s",
+                previewsEnabled ? "on" : "off", tooltipPreviewsEnabled ? "on" : "off",
+                campaignCodexPreviewsEnabled ? "on" : "off", battleCodexPreviewsEnabled ? "on" : "off",
+                delayEnabled ? "on" : "off", previewDelay, sound ? "on" : "off",
                 dummyVariantId, shieldMode, Keyboard.getKeyName(threatModeKey), Keyboard.getKeyName(threatMissileKey),
                 Keyboard.getKeyName(threatWingKey));
     }

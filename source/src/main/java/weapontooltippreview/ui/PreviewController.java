@@ -21,7 +21,7 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
     private static final int MAX_ERRORS = 20;
 
     private final TooltipWatcher tooltips = new TooltipWatcher();
-    private final CodexWatcher codex = new CodexWatcher();
+    private final CodexWatcher codex = CodexWatcher.shared();
     private final Set<String> loggedErrors = new HashSet<>();
     private int errors;
 
@@ -30,13 +30,14 @@ public final class PreviewController implements EveryFrameScript, CampaignInputL
      * previews are on. The controller is registered either way, so switching previews on mid-game works at once.
      */
     public static void onGameLoad() {
+        CodexWatcher.shared().disposeAll();
         PreviewScene.clearFailures();
         EngineSandbox.reset();
         if (!StarfarerBridge.isReady()) return;
         PreviewController controller = new PreviewController();
         Global.getSector().addTransientScript(controller);
         Global.getSector().getListenerManager().addListener(controller, true);
-        if (WeaponTooltipPreviewSettings.previewsEnabled()) PreviewScene.prewarm();
+        if (WeaponTooltipPreviewSettings.anyPreviewEnabled()) PreviewScene.prewarm();
     }
 
     @Override

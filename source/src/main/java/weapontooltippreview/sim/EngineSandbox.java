@@ -40,6 +40,7 @@ public final class EngineSandbox {
             CombatEngine.ANIMATION_GROUP};
     /** Plugins that take over the whole screen, the combat UI, camera/input, or campaign post-battle tracking/cleanup */
     private static final String[] STRIPPED_PLUGIN_PREFIXES = {
+            "weapontooltippreview.",
             "org.boxutil.",
             "org.luoxb.uiutil.",
             "data.scripts.combat.hydrofoil.",
@@ -77,6 +78,9 @@ public final class EngineSandbox {
     private static long idleSince;
     private static int createFailures;
     private static boolean disabled;
+    /** Lazily resolved package-private {@code ShaderLib.unsetForegroundRendered()}, used when GraphicsLib is active. */
+    private static boolean graphicsLibUnsetChecked;
+    private static Refl.ReflectedMethod graphicsLibUnsetForeground;
 
     private CombatEngine engine;
     private final Object input = Refl.newInstance(StarfarerBridge.inputClass);
@@ -300,6 +304,23 @@ public final class EngineSandbox {
         return ShaderHook.enableShaders && ShaderLib.areShadersAllowed();
     }
 
+    /**
+     * Clears GraphicsLib's static {@code isForegroundRendered} flag so the preview does not reuse a foreground FBO
+     * rendered earlier in the same frame by TitleScreenState or CombatState (and vice versa on the following frame).
+     */
+    private static void unsetGraphicsLibForeground() {
+        if (!GRAPHICSLIB_ENABLED) return;
+        if (!graphicsLibUnsetChecked) {
+            graphicsLibUnsetChecked = true;
+            graphicsLibUnsetForeground = resolveGraphicsLibUnsetForeground();
+        }
+        if (graphicsLibUnsetForeground != null) graphicsLibUnsetForeground.invoke(null);
+    }
+
+    private static Refl.ReflectedMethod resolveGraphicsLibUnsetForeground() {
+        return Refl.method(ShaderLib.class, "unsetForegroundRendered");
+    }
+
     /** The world rectangle (left, bottom, right, top) covering every view. */
     private static float[] worldBounds(View[] views, int count) {
         float[] bounds = {Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
@@ -479,8 +500,10 @@ public final class EngineSandbox {
         GL11.glClearColor(0f, 0f, 0f, 0f);
         setShieldMipmaps(true);
         try {
+            unsetGraphicsLibForeground();
             engine.render(false);
         } finally {
+            unsetGraphicsLibForeground();
             setShieldMipmaps(false);
             prepareCompositeState();
             sceneCopy = copyScreen(sceneCopy, 0, renderWidth, renderHeight);
@@ -532,6 +555,7 @@ public final class EngineSandbox {
                 fillBackground(backgroundRgb, view.worldX, view.worldY, clearW * unitsPerPixelX,
                         clearH * unitsPerPixelY);
                 GL11.glClearColor(0f, 0f, 0f, 0f);
+                unsetGraphicsLibForeground();
                 engine.render(false);
                 prepareCompositeState();
                 sceneCopy = copyScreen(sceneCopy, dstX, copyW, copyH);
@@ -541,6 +565,7 @@ public final class EngineSandbox {
                 copied++;
             }
         } finally {
+            unsetGraphicsLibForeground();
             setShieldMipmaps(false);
             prepareCompositeState();
             compositeScreen(views, copied, srcX, srcY, dirtyWidth, dirtyHeight, clip);
