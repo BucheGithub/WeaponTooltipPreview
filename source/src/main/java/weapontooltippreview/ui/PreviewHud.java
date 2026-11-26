@@ -63,6 +63,10 @@ final class PreviewHud {
 
     private static final Color ENEMY = settingsColor("textEnemyColor", new Color(255, 100, 0));
     private static final Color FRIEND = settingsColor("textFriendColor", new Color(155, 255, 0));
+    private static final Color NOISE_COLOR = settingsColor("noiseColor", new Color(40, 152, 176));
+    private static final String NOISE_PATH = "graphics/fx/noise.png";
+    private static final float STATIC_FPS = 28f;
+    private static final int STATIC_GLITCH_BARS = 3;
 
     // The armor hologram with its textures, colours and constants.
     private static final float SCHEMATIC_CAPITAL_SIZE = 125f;
@@ -114,6 +118,8 @@ final class PreviewHud {
     private final Map<String, float[]> fighterCenters = new HashMap<>();
     private SpriteAPI iconSpotlight, iconGrid;
     private boolean hologramLoaded;
+    private SpriteAPI noiseSprite;
+    private boolean noiseLoaded;
 
     /** Schematic: a copy of its hull sprite, its sprite metrics, and each cell's reveal. */
     private ShipAPI schematicShip;
@@ -138,13 +144,151 @@ final class PreviewHud {
 
     /** Corner brackets around the scene and (when shown) the threat hint bar below it. */
     void drawFrame(float x, float y, float w, float h, boolean threatHint, float hintY, float hintH, float alpha) {
+        drawFrame(x, y, w, h, threatHint ? alpha : 0f, hintY, hintH, alpha);
+    }
+
+    /** Corner brackets around the scene and (with hintAlpha > 0) the threat hint bar below it. */
+    void drawFrame(float x, float y, float w, float h, float hintAlpha, float hintY, float hintH, float alpha) {
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_LINE_BIT);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         drawBrackets(x, y, w, h, alpha);
-        if (threatHint) drawBrackets(x, hintY, w, hintH, alpha);
+        if (hintAlpha > 0.01f) drawBrackets(x, hintY, w, hintH, hintAlpha);
         GL11.glPopAttrib();
+    }
+
+    /**
+     * Signal-static overlay shown while the preview box expands and locks onto a feed.
+     * Uses Starsector's own UI noise texture (tiled in [0, 1] UVs without mutating wrap state), scanlines, and
+     * flickering horizontal sync bands, with a procedural fallback if the texture is unavailable.
+     */
+    void drawStatic(float x, float y, float w, float h, float intensity, float elapsed, float alpha) {
+        float a = MathUtils.clamp(intensity, 0f, 1f) * alpha;
+        if (a <= 0.005f || w <= 0.5f || h <= 0.5f) return;
+        loadNoise();
+
+        int step = (int) (elapsed * STATIC_FPS);
+        float nr = NOISE_COLOR.getRed() / 255f;
+        float ng = NOISE_COLOR.getGreen() / 255f;
+        float nb = NOISE_COLOR.getBlue() / 255f;
+
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_CURRENT_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_TEXTURE_BIT);
+        try {
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+            if (noiseSprite != null && noiseSprite.getTextureId() != 0) {
+                float tileW = Math.max(64f, noiseSprite.getWidth());
+                float tileH = Math.max(64f, noiseSprite.getHeight());
+                float uOff = hash(step * 31 + 1);
+                float vOff = hash(step * 31 + 2);
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, noiseSprite.getTextureId());
+                GL11.glColor4f(nr, ng, nb, 0.72f * a);
+                GL11.glBegin(GL11.GL_QUADS);
+                for (float py = 0f; py < h - 0.01f; ) {
+                    float v0 = (vOff + py / tileH) % 1f;
+                    float dy = Math.min(h - py, (1f - v0) * tileH);
+                    if (dy <= 0.01f) break;
+                    float v1 = v0 + dy / tileH;
+                    for (float px = 0f; px < w - 0.01f; ) {
+                        float u0 = (uOff + px / tileW) % 1f;
+                        float dx = Math.min(w - px, (1f - u0) * tileW);
+                        if (dx <= 0.01f) break;
+                        float u1 = u0 + dx / tileW;
+                        GL11.glTexCoord2f(u0, v0);
+                        GL11.glVertex2f(x + px, y + py);
+                        GL11.glTexCoord2f(u1, v0);
+                        GL11.glVertex2f(x + px + dx, y + py);
+                        GL11.glTexCoord2f(u1, v1);
+                        GL11.glVertex2f(x + px + dx, y + py + dy);
+                        GL11.glTexCoord2f(u0, v1);
+                        GL11.glVertex2f(x + px, y + py + dy);
+                        px += dx;
+                    }
+                    py += dy;
+                }
+                GL11.glEnd();
+            } else {
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                GL11.glBegin(GL11.GL_QUADS);
+                int row = 0;
+                for (float sy = y; sy < y + h; sy += 3f, row++) {
+                    float sh = Math.min(2f, y + h - sy);
+                    float lum = 0.15f + 0.45f * hash(step * 97 + row * 13);
+                    GL11.glColor4f(nr, ng, nb, lum * a);
+                    GL11.glVertex2f(x, sy);
+                    GL11.glVertex2f(x + w, sy);
+                    GL11.glVertex2f(x + w, sy + sh);
+                    GL11.glVertex2f(x, sy + sh);
+                }
+                GL11.glEnd();
+            }
+
+            // Dark scanlines over the noise.
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glColor4f(0f, 0f, 0f, 0.25f * a);
+            GL11.glBegin(GL11.GL_QUADS);
+            for (float sy = y; sy < y + h; sy += 3f) {
+                float sh = Math.min(1f, y + h - sy);
+                GL11.glVertex2f(x, sy);
+                GL11.glVertex2f(x + w, sy);
+                GL11.glVertex2f(x + w, sy + sh);
+                GL11.glVertex2f(x, sy + sh);
+            }
+            GL11.glEnd();
+
+            // Flickering additive cyan-white horizontal sync/glitch bands.
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE);
+            GL11.glBegin(GL11.GL_QUADS);
+            for (int i = 0; i < STATIC_GLITCH_BARS; i++) {
+                int seed = step * 53 + i * 19;
+                float barH = Math.min(h, 1.5f + hash(seed + 1) * 4f);
+                float barY = y + hash(seed + 2) * Math.max(0f, h - barH);
+                boolean fullWidth = hash(seed + 3) > 0.45f;
+                float barX = fullWidth ? x : x + hash(seed + 4) * w * 0.45f;
+                float barW = fullWidth ? w : Math.min(x + w - barX, w * (0.25f + hash(seed + 5) * 0.55f));
+                float barA = (0.14f + 0.24f * hash(seed + 6)) * a;
+                GL11.glColor4f(0.55f, 0.90f, 1.0f, barA);
+                GL11.glVertex2f(barX, barY);
+                GL11.glVertex2f(barX + barW, barY);
+                GL11.glVertex2f(barX + barW, barY + barH);
+                GL11.glVertex2f(barX, barY + barH);
+            }
+            GL11.glEnd();
+        } finally {
+            GL11.glPopAttrib();
+        }
+    }
+
+    private void loadNoise() {
+        if (noiseLoaded) return;
+        noiseLoaded = true;
+        try {
+            noiseSprite = Global.getSettings().getSprite("ui", "noise");
+        } catch (RuntimeException ignored) {
+            noiseSprite = null;
+        }
+        if (noiseSprite == null || noiseSprite.getTextureId() == 0) {
+            try {
+                Global.getSettings().loadTexture(NOISE_PATH);
+                noiseSprite = Global.getSettings().getSprite(NOISE_PATH);
+            } catch (IOException | RuntimeException e) {
+                noiseSprite = null;
+                Log.info("no static noise texture: %s", e);
+            }
+        }
+    }
+
+    /** Deterministic 0..1 hash for per-frame static jitter without allocating. */
+    private static float hash(int n) {
+        int x = n ^ (n >>> 16);
+        x *= 0x7feb352d;
+        x ^= x >>> 15;
+        x *= 0x846ca68b;
+        x ^= x >>> 16;
+        return (x & 0x00FFFFFF) / (float) 0x01000000;
     }
 
     /** Draws the split-view strip (when split), the weapon/wing readout, and the target bars + armor schematic. */
@@ -232,15 +376,18 @@ final class PreviewHud {
 
     /** HUD brackets */
     private static void drawBrackets(float x, float y, float w, float h, float alpha) {
+        float bx = Math.min(BRACKET, w / 2f);
+        float by = Math.min(BRACKET, h / 2f);
+        if (bx <= 0.5f || by <= 0.5f) return;
         GL11.glLineWidth(1f);
         GL11.glColor4f(0.35f, 0.75f, 0.85f, 0.9f * alpha);
         GL11.glBegin(GL11.GL_LINES);
         float[][] corners = {{x, y, 1, 1}, {x + w, y, -1, 1}, {x, y + h, 1, -1}, {x + w, y + h, -1, -1}};
         for (float[] c : corners) {
             GL11.glVertex2f(c[0], c[1]);
-            GL11.glVertex2f(c[0] + c[2] * BRACKET, c[1]);
+            GL11.glVertex2f(c[0] + c[2] * bx, c[1]);
             GL11.glVertex2f(c[0], c[1]);
-            GL11.glVertex2f(c[0], c[1] + c[3] * BRACKET);
+            GL11.glVertex2f(c[0], c[1] + c[3] * by);
         }
         GL11.glEnd();
     }

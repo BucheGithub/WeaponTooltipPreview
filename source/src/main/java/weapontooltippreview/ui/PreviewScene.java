@@ -35,6 +35,16 @@ import java.util.Set;
 /** The panel injected into a weapon or LPC tooltip and the scene running inside it. Acquires the Engine, steps the Scenario and renders the viewports & HUD overlays. */
 final class PreviewScene implements CustomUIPanelPlugin {
 
+    /** How a newly created preview panel opens. */
+    enum Opening {
+        /** Opens straight into the live preview (0s delay or rebuild of an open tooltip). */
+        IMMEDIATE,
+        /** Tooltip expands with static inside the frame, then fades static into the live preview. */
+        EXPAND_STATIC,
+        /** Already open (e.g. fighter LPC page turn): brief static flicker into the new subject. */
+        STATIC_FLICKER
+    }
+
     /** The threat key line: its box and the gap above it. */
     static final float THREAT_HINT_HEIGHT = 24f;
     /** As tall as the game's own F1 hint box under the tooltip: the font's line (10) plus 8. */
@@ -42,6 +52,12 @@ final class PreviewScene implements CustomUIPanelPlugin {
     /** The text sits in the box as in the game's hint: 4 below the top, 7 in from the left. */
     private static final float THREAT_HINT_PAD = 4f;
     private static final float THREAT_HINT_INDENT = 7f;
+    /** Full-static hold and fade durations after expansion completes. */
+    private static final float STATIC_HOLD = 0.06f;
+    private static final float STATIC_FADE = 0.14f;
+    /** Shorter static burst when cycling fighter LPC pages on an already-open preview. */
+    private static final float FLICKER_HOLD = 0.04f;
+    private static final float FLICKER_FADE = 0.11f;
 
     private static final float MAX_STEP = 1f / 30f;
     private static final Vector2f FAR_AWAY = new Vector2f(1e7f, 1e7f);
@@ -94,10 +110,44 @@ final class PreviewScene implements CustomUIPanelPlugin {
     private boolean failed;
     private boolean disposed;
 
-    PreviewScene(int tooltipId, PreviewSubject subject, RefitShip refit) {
+    /** Height of the scene viewport above the optional threat hint bar; used while the panel is expanding. */
+    private final float sceneTargetHeight;
+    private boolean expanding;
+    private float staticHoldRemaining;
+    private float staticFadeDuration;
+    private float staticFadeRemaining;
+    private float staticClock;
+
+    PreviewScene(int tooltipId, PreviewSubject subject, RefitShip refit, float sceneTargetHeight, Opening opening) {
         this.tooltipId = tooltipId;
         this.subject = subject;
         this.refit = refit;
+        this.sceneTargetHeight = sceneTargetHeight;
+        if (opening == Opening.EXPAND_STATIC) {
+            this.expanding = true;
+            this.staticHoldRemaining = STATIC_HOLD;
+            this.staticFadeDuration = STATIC_FADE;
+            this.staticFadeRemaining = STATIC_FADE;
+        } else if (opening == Opening.STATIC_FLICKER) {
+            this.staticHoldRemaining = FLICKER_HOLD;
+            this.staticFadeDuration = FLICKER_FADE;
+            this.staticFadeRemaining = FLICKER_FADE;
+        }
+    }
+
+    /** Called by TooltipWatcher once the panel reaches its full expanded height. */
+    void finishExpanding() {
+        expanding = false;
+    }
+
+    /** Current static overlay opacity in [0, 1]. */
+    private float staticIntensity() {
+        if (failed) return 0f;
+        if (expanding || staticHoldRemaining > 0f) return 1f;
+        if (staticFadeDuration > 0f && staticFadeRemaining > 0f) {
+            return Math.min(1f, staticFadeRemaining / staticFadeDuration);
+        }
+        return 0f;
     }
 
     static boolean hasFailed(PreviewSubject subject, boolean inRefit) {
@@ -112,7 +162,8 @@ final class PreviewScene implements CustomUIPanelPlugin {
     /** Runs a throwaway scene while the game loads, so the first preview after it does not pay for building the engine. */
     static void prewarm() {
         long t0 = System.nanoTime();
-        PreviewScene scene = new PreviewScene(0, new PreviewSubject(PREWARM_WEAPON_ID, null), null);
+        PreviewScene scene = new PreviewScene(0, new PreviewSubject(PREWARM_WEAPON_ID, null), null,
+                PREWARM_HEIGHT, Opening.IMMEDIATE);
         try {
             scene.startScene();
             try {
@@ -145,10 +196,11 @@ final class PreviewScene implements CustomUIPanelPlugin {
         threatHint = element.addPara("", THREAT_HINT_PAD);
         panel.addUIElement(element).inBL(THREAT_HINT_INDENT, 0f);
         writeThreatHint();
+        if (staticIntensity() > 0f) threatHint.setOpacity(1f - staticIntensity());
     }
 
     private boolean showsThreatHint() {
-        return threatHint != null && !failed;
+        return threatHint != null && !failed && !expanding && staticHoldRemaining <= 0f;
     }
 
     /** Side by side and in the colours of the F1/F2 hint */
@@ -174,9 +226,32 @@ final class PreviewScene implements CustomUIPanelPlugin {
     @Override
     public void advance(float amount) {
         if (disposed || failed || pos == null) return;
+        float dt = Math.min(Math.max(amount, 0f), 0.1f);
+        if (expanding || staticHoldRemaining > 0f || staticFadeRemaining > 0f) {
+            staticClock += dt;
+        }
         if (threatHint != null && threatHintVersion != ThreatSelection.version()) writeThreatHint();
+        if (expanding) {
+            if (threatHint != null) threatHint.setOpacity(0f);
+            return;
+        }
         try {
-            if (sandbox == null) startScene();
+            if (sandbox == null) {
+                startScene();
+                if (staticHoldRemaining > 0f) {
+                    // Populate the first frame silently while full static covers the viewport.
+                    step(MAX_STEP, false);
+                }
+            }
+            if (staticHoldRemaining > 0f) {
+                staticHoldRemaining = Math.max(0f, staticHoldRemaining - dt);
+                if (threatHint != null) threatHint.setOpacity(0f);
+                return;
+            }
+            if (staticFadeRemaining > 0f) {
+                staticFadeRemaining = Math.max(0f, staticFadeRemaining - dt);
+            }
+            if (threatHint != null) threatHint.setOpacity(1f - staticIntensity());
             step(amount, true);
         } catch (NoPreviewException e) {
             fail(e.getMessage(), null);
@@ -185,26 +260,46 @@ final class PreviewScene implements CustomUIPanelPlugin {
         }
     }
 
+    /** Scene viewport height within the panel: grows top-down to sceneTargetHeight before revealing the threat hint below. */
+    private float sceneHeight() {
+        if (expanding) return Math.min(pos.getHeight(), sceneTargetHeight);
+        return pos.getHeight() - hintHeight;
+    }
+
+    /** Bottom Y of the scene viewport inside the panel. */
+    private float sceneY(float h) {
+        if (expanding) return pos.getY() + pos.getHeight() - h;
+        return pos.getY() + hintHeight;
+    }
+
     @Override
     public void renderBelow(float alphaMult) {
         if (pos == null) return;
-        HUD.drawBackground(pos.getX(), pos.getY() + hintHeight, pos.getWidth(), pos.getHeight() - hintHeight, alphaMult);
+        float h = sceneHeight();
+        float y = sceneY(h);
+        HUD.drawBackground(pos.getX(), y, pos.getWidth(), h, alphaMult);
     }
 
     /** The scene takes the panel above the threat key line. */
     @Override
     public void render(float alphaMult) {
         if (pos == null) return;
-        float x = pos.getX(), y = pos.getY() + hintHeight, w = pos.getWidth(), h = pos.getHeight() - hintHeight;
-        if (sandbox != null && frames > 0) {
+        float x = pos.getX(), w = pos.getWidth(), h = sceneHeight(), y = sceneY(h);
+        float staticInt = staticIntensity();
+        if (!expanding && staticHoldRemaining <= 0f && sandbox != null && frames > 0) {
             try {
                 drawScene(x, y, w, h, arcRenderer != null ? this::drawArc : null);
                 HUD.drawOverlays(scenario, panes, paneCount, split, x, y, w, h, alphaMult);
             } catch (Throwable t) {
                 fail("render failed", t);
+                staticInt = 0f;
             }
         }
-        HUD.drawFrame(x, y, w, h, showsThreatHint(), pos.getY(), THREAT_HINT_BOX_HEIGHT, alphaMult);
+        if (staticInt > 0f) {
+            HUD.drawStatic(x, y, w, h, staticInt, staticClock, alphaMult);
+        }
+        float hintAlpha = showsThreatHint() ? (1f - staticInt) * alphaMult : 0f;
+        HUD.drawFrame(x, y, w, h, hintAlpha, pos.getY(), THREAT_HINT_BOX_HEIGHT, alphaMult);
     }
 
     @Override
@@ -413,6 +508,9 @@ final class PreviewScene implements CustomUIPanelPlugin {
     /** An expected "cannot preview this weapon"; otherwise the engine is rebuilt for safety. */
     private void fail(String what, Throwable t) {
         failed = true;
+        expanding = false;
+        staticHoldRemaining = 0f;
+        staticFadeRemaining = 0f;
         if (t != null) {
             FAILED.add(subject);
             Log.error("tooltip #" + tooltipId + " (" + subject + "): " + what, t);

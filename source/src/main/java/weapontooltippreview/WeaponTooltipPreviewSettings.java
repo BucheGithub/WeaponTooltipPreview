@@ -19,6 +19,8 @@ public final class WeaponTooltipPreviewSettings {
     }
 
     private static final String MOD_ID = "weapon_tooltip_preview";
+    private static final float DEFAULT_PREVIEW_DELAY = 0.5f;
+    private static final float MAX_PREVIEW_DELAY = 2f;
     private static final String DEFAULT_DUMMY_VARIANT_ID = "gemini_Standard";
     /**
      * Radio option (as written in the CSV) → stock variant used as the dummy. Small carriers whose forward missile
@@ -31,6 +33,8 @@ public final class WeaponTooltipPreviewSettings {
     };
 
     private static boolean previewsEnabled = true;
+    private static boolean delayEnabled;
+    private static float previewDelay = DEFAULT_PREVIEW_DELAY;
     private static boolean sound = true;
     private static String dummyVariantId = DEFAULT_DUMMY_VARIANT_ID;
     private static ShieldMode shieldMode = ShieldMode.FLUCTUATING;
@@ -45,6 +49,16 @@ public final class WeaponTooltipPreviewSettings {
     /** Weapon and wing tooltips get a preview. */
     public static boolean previewsEnabled() {
         return previewsEnabled;
+    }
+
+    /** Delays opening the preview on hover, then expands with a short static animation. */
+    public static boolean delayEnabled() {
+        return delayEnabled;
+    }
+
+    /** Seconds to wait while hovering before expanding the preview (when {@link #delayEnabled()} is true). */
+    public static float previewDelay() {
+        return previewDelay;
     }
 
     /** The preview plays its sound, at the player's sound effects volume. */
@@ -86,6 +100,9 @@ public final class WeaponTooltipPreviewSettings {
         Log.setEnabled(Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableLogs")));
 
         previewsEnabled = !Boolean.FALSE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enablePreviews"));
+        delayEnabled = Boolean.TRUE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_enableDelay"));
+        Double delay = LunaSettings.getDouble(MOD_ID, "WeaponTooltipPreview_previewDelay");
+        previewDelay = delay != null ? Math.max(0f, Math.min(MAX_PREVIEW_DELAY, delay.floatValue())) : DEFAULT_PREVIEW_DELAY;
         sound = !Boolean.FALSE.equals(LunaSettings.getBoolean(MOD_ID, "WeaponTooltipPreview_sound"));
 
         String dummy = LunaSettings.getString(MOD_ID, "WeaponTooltipPreview_dummyShip");
@@ -102,9 +119,9 @@ public final class WeaponTooltipPreviewSettings {
         threatModeKey = keySetting("WeaponTooltipPreview_threatModeKey", Keyboard.KEY_F5);
         threatMissileKey = keySetting("WeaponTooltipPreview_threatMissileKey", Keyboard.KEY_F6);
         threatWingKey = keySetting("WeaponTooltipPreview_threatWingKey", Keyboard.KEY_F7);
-        Log.info("settings: previews %s, sound %s, dummy %s, shield %s, threat keys %s %s %s",
-                previewsEnabled ? "on" : "off", sound ? "on" : "off", dummyVariantId, shieldMode,
-                Keyboard.getKeyName(threatModeKey), Keyboard.getKeyName(threatMissileKey),
+        Log.info("settings: previews %s, delay %s (%.2fs), sound %s, dummy %s, shield %s, threat keys %s %s %s",
+                previewsEnabled ? "on" : "off", delayEnabled ? "on" : "off", previewDelay, sound ? "on" : "off",
+                dummyVariantId, shieldMode, Keyboard.getKeyName(threatModeKey), Keyboard.getKeyName(threatMissileKey),
                 Keyboard.getKeyName(threatWingKey));
     }
 
